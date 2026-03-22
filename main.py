@@ -29,6 +29,7 @@ def _stage_dir(carpeta_salida: str | Path, stage_dirname: str) -> Path:
 
 def ejecutar_etapa_1_limpieza_base(
     ruta_msewjo: str | Path,
+    ruta_matriz_clasificacion: str | Path,
     carpeta_salida: str | Path,
     fecha_ancla_turno: dt.date | None = None,
 ) -> Dict[str, Path]:
@@ -45,6 +46,7 @@ def ejecutar_etapa_1_limpieza_base(
     generar_cierre_turno_desde_msewjo(
         path_msewjo=ruta_msewjo,
         output_path=cierre_turno_path,
+        path_diccionario=ruta_matriz_clasificacion,
         turn_start=turn_start,
         turn_end=turn_end,
         include_sin_fecha=True,
@@ -127,7 +129,12 @@ def ejecutar_etapa_3_clasificacion(
     df_cierre_base = read_excel_file(ruta_cierre_base)
     df_turno_aplicado = read_excel_file(ruta_registros_turno_aplicado)
 
-    df_clasificados = clasificar_registros(df_turno_aplicado, ruta_matriz_clasificacion)
+    df_clasificados = clasificar_registros(
+        df_turno_aplicado,
+        ruta_matriz_clasificacion,
+        modo_nuevos_valores="controlado",
+        export_dir=stage_dir,
+    )
     clasificados_path = save_dataframe_to_excel(
         df_clasificados, stage_dir / "registros_clasificados.xlsx"
     )
@@ -143,9 +150,14 @@ def ejecutar_etapa_3_clasificacion(
 
 def ejecutar_limpieza_y_base(
     ruta_msewjo: str | Path,
+    ruta_matriz_clasificacion: str | Path,
     carpeta_salida: str | Path,
 ) -> Dict[str, Path]:
-    return ejecutar_etapa_1_limpieza_base(ruta_msewjo, carpeta_salida)
+    return ejecutar_etapa_1_limpieza_base(
+        ruta_msewjo=ruta_msewjo,
+        ruta_matriz_clasificacion=ruta_matriz_clasificacion,
+        carpeta_salida=carpeta_salida,
+    )
 
 
 def ejecutar_flujo(
@@ -156,7 +168,11 @@ def ejecutar_flujo(
     carpeta_salida: str | Path,
 ) -> Dict[str, Path]:
     print("Iniciando procesamiento completo...")
-    etapa_1 = ejecutar_etapa_1_limpieza_base(ruta_msewjo, carpeta_salida)
+    etapa_1 = ejecutar_etapa_1_limpieza_base(
+        ruta_msewjo=ruta_msewjo,
+        ruta_matriz_clasificacion=ruta_matriz_clasificacion,
+        carpeta_salida=carpeta_salida,
+    )
     etapa_2 = ejecutar_etapa_2_actualizar_mensual(
         ruta_programa_turno, ruta_programa_mensual, carpeta_salida
     )
@@ -181,7 +197,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--msewjo", required=True, help="Ruta archivo MSEWJO")
     parser.add_argument("--turno", required=True, help="Ruta programa de monitoreo por turno")
     parser.add_argument("--mensual", required=True, help="Ruta programa de monitoreo mensual")
-    parser.add_argument("--matriz", required=True, help="Ruta matriz de clasificacion de cierre")
+    parser.add_argument(
+        "--matriz",
+        required=True,
+        help="Ruta Excel de diccionarios (hojas MATRIZ_TERRENO y COD_CIERRE)",
+    )
     parser.add_argument("--output", required=True, help="Carpeta de salida")
     return parser
 

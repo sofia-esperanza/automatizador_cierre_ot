@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as dt
+import json
 from pathlib import Path
 import traceback
 import tkinter as tk
@@ -36,9 +38,11 @@ CAMPO_META = {
     "msewjo": {"label": "Archivo MSEWJO", "selector": "file"},
     "turno": {"label": "Programa Turno", "selector": "file"},
     "mensual": {"label": "Programa Mensual", "selector": "file"},
-    "matriz": {"label": "Matriz Clasificacion", "selector": "file"},
     "output": {"label": "Carpeta Salida", "selector": "dir"},
 }
+
+CONFIG_DIR = Path.home() / ".automatizador_cierre_ot"
+CONFIG_PATH = CONFIG_DIR / "config_gui.json"
 
 
 class AutomatizadorGUI(tk.Tk):
@@ -49,16 +53,18 @@ class AutomatizadorGUI(tk.Tk):
         self.resizable(False, False)
         self.configure(bg=PALETA["superficie"])
 
+        diccionario_guardado = self._load_saved_diccionario_path()
         self.vars = {
             "msewjo": tk.StringVar(),
             "turno": tk.StringVar(),
             "mensual": tk.StringVar(),
-            "matriz": tk.StringVar(),
+            "matriz": tk.StringVar(value=diccionario_guardado),
             "output": tk.StringVar(value=str(Path("output").resolve())),
         }
         first_stage = next(iter(ETAPAS.keys()))
         self.stage_label_var = tk.StringVar(value=first_stage)
         self.requirements_var = tk.StringVar(value="")
+        self.diccionario_badge_var = tk.StringVar(value="Ultima actualizacion: --/--/--")
         self.status_var = tk.StringVar(
             value="Selecciona etapa, archivos y presiona PROCESAR."
         )
@@ -75,25 +81,59 @@ class AutomatizadorGUI(tk.Tk):
 
         tk.Frame(root_container, bg=PALETA["primario_oscuro"], height=6).pack(fill="x", pady=(0, 12))
 
+        title_row = tk.Frame(root_container, bg=PALETA["superficie"])
+        title_row.pack(fill="x", pady=(0, 8))
+
+        title_container = tk.Frame(title_row, bg=PALETA["superficie"])
+        title_container.pack(side="left", fill="x", expand=True)
+
         title = tk.Label(
-            root_container,
+            title_container,
             text="Automatizador Cierre OT",
             bg=PALETA["superficie"],
             fg=PALETA["primario_oscuro"],
             font=("Segoe UI", 20, "bold"),
             anchor="w",
         )
-        title.pack(fill="x", pady=(0, 6))
+        title.pack(anchor="w")
 
         subtitle = tk.Label(
-            root_container,
+            title_container,
             text="Selecciona una etapa y adjunta solo los archivos requeridos",
             bg=PALETA["superficie"],
             fg=PALETA["gris_oscuro"],
             font=("Segoe UI", 11),
             anchor="w",
         )
-        subtitle.pack(fill="x", pady=(0, 14))
+        subtitle.pack(anchor="w", pady=(6, 0))
+
+        diccionario_panel = tk.Frame(title_row, bg=PALETA["superficie"])
+        diccionario_panel.pack(side="right", padx=(12, 2))
+
+        tk.Button(
+            diccionario_panel,
+            text="Diccionarios",
+            width=16,
+            command=self._select_diccionario,
+            bg=PALETA["superficie"],
+            fg=PALETA["primario_oscuro"],
+            activebackground=PALETA["primario"],
+            activeforeground=PALETA["superficie"],
+            relief=tk.SOLID,
+            bd=1,
+            font=("Segoe UI", 10, "bold"),
+            cursor="hand2",
+        ).pack(anchor="e")
+
+        tk.Label(
+            diccionario_panel,
+            textvariable=self.diccionario_badge_var,
+            bg=PALETA["superficie"],
+            fg=PALETA["gris_oscuro"],
+            font=("Segoe UI", 9),
+            anchor="e",
+            justify="right",
+        ).pack(anchor="e", pady=(4, 0))
 
         card = tk.Frame(
             root_container,
@@ -155,7 +195,7 @@ class AutomatizadorGUI(tk.Tk):
         fields_container = tk.Frame(card, bg=PALETA["superficie"])
         fields_container.pack(fill="both", expand=True, padx=18, pady=(2, 8))
 
-        field_order = ["msewjo", "turno", "mensual", "matriz", "output"]
+        field_order = ["msewjo", "turno", "mensual", "output"]
         for idx, key in enumerate(field_order):
             meta = CAMPO_META[key]
             row_frame = tk.Frame(fields_container, bg=PALETA["superficie"])
@@ -256,6 +296,16 @@ class AutomatizadorGUI(tk.Tk):
         if path:
             self.vars[key].set(path)
 
+    def _select_diccionario(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Seleccionar diccionario Excel",
+            filetypes=[("Archivos Excel", "*.xlsx *.xls")],
+        )
+        if path:
+            self.vars["matriz"].set(path)
+            self._save_saved_diccionario_path(path)
+            self._refresh_diccionario_badge()
+
     def _select_dir(self, key: str) -> None:
         path = filedialog.askdirectory(title="Seleccionar carpeta de salida")
         if path:
@@ -264,14 +314,50 @@ class AutomatizadorGUI(tk.Tk):
     def _selected_stage(self) -> str:
         return ETAPAS[self.stage_label_var.get()]
 
+    def _load_saved_diccionario_path(self) -> str:
+        try:
+            if not CONFIG_PATH.exists():
+                return ""
+            payload = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return ""
+            value = payload.get("ruta_diccionario", "")
+            return str(value).strip()
+        except Exception:
+            return ""
+
+    def _save_saved_diccionario_path(self, path: str) -> None:
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            payload = {"ruta_diccionario": str(path).strip()}
+            CONFIG_PATH.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            # No bloquea la UI si no puede guardar configuracion.
+            pass
+
+    def _refresh_diccionario_badge(self) -> None:
+        dic_path = self.vars["matriz"].get().strip()
+        if not dic_path:
+            self.diccionario_badge_var.set("Ultima actualizacion: --/--/--")
+            return
+        p = Path(dic_path)
+        if not p.exists():
+            self.diccionario_badge_var.set("Ultima actualizacion: archivo no encontrado")
+            return
+        date_str = dt.datetime.fromtimestamp(p.stat().st_mtime).strftime("%d/%m/%y")
+        self.diccionario_badge_var.set(f"Ultima actualizacion: {date_str}")
+
     def _required_files_for_stage(self, stage: str) -> list[str]:
         if stage == "etapa_1":
             return ["msewjo"]
         if stage == "etapa_2":
             return ["turno", "mensual"]
         if stage == "etapa_3":
-            return ["matriz"]
-        return ["msewjo", "turno", "mensual", "matriz"]
+            return []
+        return ["msewjo", "turno", "mensual"]
 
     def _on_stage_change(self, *args: object) -> None:
         self._refresh_fields_visibility()
@@ -295,7 +381,14 @@ class AutomatizadorGUI(tk.Tk):
         required_labels = ", ".join(
             CAMPO_META[k]["label"] for k in self._required_files_for_stage(stage)
         )
+        if stage in {"etapa_1", "etapa_3", "completo"}:
+            required_labels = (
+                f"{required_labels}, Diccionarios (boton superior)"
+                if required_labels
+                else "Diccionarios (boton superior)"
+            )
         self.requirements_var.set(f"Requeridos para esta etapa: {required_labels}.")
+        self._refresh_diccionario_badge()
         self.status_var.set("Listo para procesar.")
 
     def _validate_inputs(self, stage: str) -> None:
@@ -305,10 +398,20 @@ class AutomatizadorGUI(tk.Tk):
                 raise ValueError(f"Falta seleccionar: {CAMPO_META[key]['label']}")
             if not Path(value).exists():
                 raise FileNotFoundError(f"No existe el archivo: {value}")
+            if key == "matriz":
+                self._save_saved_diccionario_path(value)
 
         output = self.vars["output"].get().strip()
         if not output:
             raise ValueError("Falta seleccionar carpeta de salida.")
+
+        if stage in {"etapa_1", "etapa_3", "completo"}:
+            diccionario = self.vars["matriz"].get().strip()
+            if not diccionario:
+                raise ValueError("Falta seleccionar Diccionarios (boton superior).")
+            if not Path(diccionario).exists():
+                raise FileNotFoundError(f"No existe archivo de diccionario: {diccionario}")
+            self._save_saved_diccionario_path(diccionario)
 
         if stage == "etapa_3":
             base = Path(output) / TEMP_DIRNAME
@@ -337,6 +440,7 @@ class AutomatizadorGUI(tk.Tk):
             if stage == "etapa_1":
                 result = ejecutar_etapa_1_limpieza_base(
                     ruta_msewjo=self.vars["msewjo"].get(),
+                    ruta_matriz_clasificacion=self.vars["matriz"].get(),
                     carpeta_salida=self.vars["output"].get(),
                 )
             elif stage == "etapa_2":

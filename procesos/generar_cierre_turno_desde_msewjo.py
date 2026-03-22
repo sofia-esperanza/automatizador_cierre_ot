@@ -14,6 +14,8 @@ from openpyxl.styles.differential import DifferentialStyle
 from openpyxl.utils.cell import column_index_from_string
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from procesos.clasificar_cierre_ot import cargar_diccionarios
+
 TURN_START_WEEKDAY = 3  # jueves
 
 NORMAL_HEADERS = [
@@ -56,25 +58,6 @@ DESC_MAP = {
     "TRASLADO PERS. Y CAM. TURNO CONTRATOS": "TRAS PERS. Y CAM. TURNO CONTRAT",
     "TRASLADO MUESTRAS Y MATERIAL MUESTREO": "TRAS MUESTRAS Y MATERIAL MUEST",
     "MUESTREO M. AGUAS SUPERF. (FOTOMETRO)": "MM. AGUAS  SUPERF. (FOTOMETRO)",
-}
-
-MATRIZ_TERRENO_MAP = {
-    "MED DE NIVELES FREATICOS": "NF",
-    "MEDICION DE NIVELES FREATICOS": "NF",
-    "MEDICION NIVELES FREATICOS": "NF",
-    "MM DE AGUAS SUBTERRANEAS": "ASUB",
-    "MM DE AGUAS SUPERFICIALES": "ASUP",
-    "MONITOREO DE BANOS Y CASINOS": "AP",
-    "MONIT EN SALAS DE ESTACION Y TK": "AP",
-    "MM. AGUAS  SUPERF. (FOTOMETRO)": "FOTOMETRO",
-    "MUESTREO M. AGUAS SUPERF (FOTOMETRO)": "FOTOMETRO",
-    "MEDICION DE CAUDALES": "CAUDAL",
-    "MEDICION CAUDALES": "CAUDAL",
-    "MUESTREO DE RIL-AS (CALIDAD)": "AR",
-    "MUESTREO PUNTUAL DE RIL-AS": "AR",
-    "MUESTREO PUNTUAL DE RIL AS": "AR",
-    "HOUSEKEEPING": "HK",
-    "MONITOREO AGUAS SERVIDAS": "AR",
 }
 
 MSEWJO_COLUMN_MAP = {
@@ -138,17 +121,35 @@ def normalize_desc_b(text: Any) -> Any:
     return s
 
 
-def clasificar_matriz_terreno(descripcion: Any, grupo: Any) -> str:
+def _load_matriz_terreno_map(
+    path_diccionario: str | Path,
+    cache_dir: str | Path | None = None,
+) -> Dict[str, str]:
+    diccionarios = cargar_diccionarios(path_diccionario, cache_dir=cache_dir)
+    matriz_dict = diccionarios.get("MATRIZ", {})
+    result: Dict[str, str] = {}
+    for actividad, matriz in matriz_dict.items():
+        key = _norm_key(str(actividad))
+        value = str(matriz).strip()
+        if key and value:
+            result[key] = value
+    return result
+
+
+def clasificar_matriz_terreno(
+    descripcion: Any,
+    grupo: Any,
+    matriz_terreno_map: Dict[str, str] | None = None,
+) -> str:
     if not descripcion:
         return ""
     grupo_norm = _norm_key(str(grupo or ""))
     if grupo_norm not in {"SIGVA", "SIGVANC"}:
         return ""
     descripcion_norm = _norm_key(str(descripcion))
-    for source, code in MATRIZ_TERRENO_MAP.items():
-        if _norm_key(source) == descripcion_norm:
-            return code
-    return ""
+    if matriz_terreno_map is None:
+        return ""
+    return matriz_terreno_map.get(descripcion_norm, "")
 
 
 def safe_sheet_name(date_value: dt.date, existing: set[str]) -> str:
@@ -256,6 +257,7 @@ def build_output_workbook(
     turn_start: Optional[dt.date] = None,
     turn_end: Optional[dt.date] = None,
     include_sin_fecha: bool = True,
+    matriz_terreno_map: Dict[str, str] | None = None,
 ) -> openpyxl.Workbook:
     if (turn_start is None) != (turn_end is None):
         raise ValueError("turn_start y turn_end deben definirse juntos.")
@@ -339,7 +341,15 @@ def build_output_workbook(
                 f'IF(K{i}<>""," " & K{i},""),""))'
             )
             ws.cell(i, 11, None).alignment = data_align
-            ws.cell(i, 12, clasificar_matriz_terreno(normalize_desc_b(item["Descripción"]), item["Grupo trab"])).alignment = data_align
+            ws.cell(
+                i,
+                12,
+                clasificar_matriz_terreno(
+                    normalize_desc_b(item["Descripción"]),
+                    item["Grupo trab"],
+                    matriz_terreno_map=matriz_terreno_map,
+                ),
+            ).alignment = data_align
 
         last_row = max(2, 1 + len(data_rows))
         apply_comment_rules(ws, "I", last_row)
@@ -458,16 +468,26 @@ def build_output_workbook(
 def generar_cierre_turno_desde_msewjo(
     path_msewjo: str | Path,
     output_path: str | Path,
+    path_diccionario: str | Path | None = None,
     turn_start: Optional[dt.date] = None,
     turn_end: Optional[dt.date] = None,
     include_sin_fecha: bool = True,
 ) -> Dict[str, Any]:
+    if path_diccionario is None:
+        raise ValueError(
+            "Se requiere path_diccionario para clasificar Matriz Terreno en etapa 1."
+        )
     rows = extract_rows_from_msewjo(path_msewjo)
+    matriz_terreno_map = _load_matriz_terreno_map(
+        path_diccionario=path_diccionario,
+        cache_dir=Path(output_path).parent,
+    )
     wb = build_output_workbook(
         rows,
         turn_start=turn_start,
         turn_end=turn_end,
         include_sin_fecha=include_sin_fecha,
+        matriz_terreno_map=matriz_terreno_map,
     )
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
