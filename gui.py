@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import json
 from pathlib import Path
@@ -38,11 +39,193 @@ CAMPO_META = {
     "msewjo": {"label": "Archivo MSEWJO", "selector": "file"},
     "turno": {"label": "Programa Turno", "selector": "file"},
     "mensual": {"label": "Programa Mensual", "selector": "file"},
+    "fecha_desde": {"label": "Fecha desde", "selector": "date"},
+    "fecha_hasta": {"label": "Fecha hasta", "selector": "date"},
     "output": {"label": "Carpeta Salida", "selector": "dir"},
 }
 
 CONFIG_DIR = Path.home() / ".automatizador_cierre_ot"
 CONFIG_PATH = CONFIG_DIR / "config_gui.json"
+
+
+class DatePickerDialog(tk.Toplevel):
+    def __init__(
+        self,
+        parent: tk.Widget,
+        initial_date: dt.date,
+        on_select: callable,
+    ) -> None:
+        super().__init__(parent)
+        self.title("Seleccionar fecha")
+        self.resizable(False, False)
+        self.configure(bg=PALETA["superficie"])
+        self.transient(parent)
+        self.grab_set()
+
+        self._on_select_callback = on_select
+        self.current_year = initial_date.year
+        self.current_month = initial_date.month
+
+        container = tk.Frame(self, bg=PALETA["superficie"])
+        container.pack(padx=10, pady=10)
+
+        header = tk.Frame(container, bg=PALETA["superficie"])
+        header.pack(fill="x")
+
+        tk.Button(
+            header,
+            text="<",
+            width=3,
+            command=lambda: self._change_month(-1),
+            bg=PALETA["superficie"],
+            fg=PALETA["primario_oscuro"],
+            relief=tk.SOLID,
+            bd=1,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2",
+        ).pack(side="left")
+
+        self.month_label_var = tk.StringVar()
+        tk.Label(
+            header,
+            textvariable=self.month_label_var,
+            bg=PALETA["superficie"],
+            fg=PALETA["texto"],
+            font=("Segoe UI", 10, "bold"),
+            width=18,
+            anchor="center",
+        ).pack(side="left", padx=6)
+
+        tk.Button(
+            header,
+            text=">",
+            width=3,
+            command=lambda: self._change_month(1),
+            bg=PALETA["superficie"],
+            fg=PALETA["primario_oscuro"],
+            relief=tk.SOLID,
+            bd=1,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2",
+        ).pack(side="left")
+
+        weekdays = tk.Frame(container, bg=PALETA["superficie"])
+        weekdays.pack(pady=(8, 4))
+        for idx, day_name in enumerate(["L", "M", "X", "J", "V", "S", "D"]):
+            tk.Label(
+                weekdays,
+                text=day_name,
+                width=4,
+                bg=PALETA["superficie"],
+                fg=PALETA["gris_oscuro"],
+                font=("Segoe UI", 9, "bold"),
+            ).grid(row=0, column=idx, padx=1, pady=1)
+
+        self.days_frame = tk.Frame(container, bg=PALETA["superficie"])
+        self.days_frame.pack()
+
+        actions = tk.Frame(container, bg=PALETA["superficie"])
+        actions.pack(fill="x", pady=(8, 0))
+
+        tk.Button(
+            actions,
+            text="Hoy",
+            width=8,
+            command=self._select_today,
+            bg=PALETA["superficie"],
+            fg=PALETA["primario_oscuro"],
+            relief=tk.SOLID,
+            bd=1,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        ).pack(side="left")
+
+        tk.Button(
+            actions,
+            text="Cerrar",
+            width=8,
+            command=self.destroy,
+            bg=PALETA["superficie"],
+            fg=PALETA["gris_oscuro"],
+            relief=tk.SOLID,
+            bd=1,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        ).pack(side="right")
+
+        self._render_days()
+
+    def _month_title(self) -> str:
+        month_name = {
+            1: "Enero",
+            2: "Febrero",
+            3: "Marzo",
+            4: "Abril",
+            5: "Mayo",
+            6: "Junio",
+            7: "Julio",
+            8: "Agosto",
+            9: "Septiembre",
+            10: "Octubre",
+            11: "Noviembre",
+            12: "Diciembre",
+        }[self.current_month]
+        return f"{month_name} {self.current_year}"
+
+    def _change_month(self, delta: int) -> None:
+        year = self.current_year
+        month = self.current_month + delta
+        if month < 1:
+            month = 12
+            year -= 1
+        elif month > 12:
+            month = 1
+            year += 1
+        self.current_year = year
+        self.current_month = month
+        self._render_days()
+
+    def _render_days(self) -> None:
+        self.month_label_var.set(self._month_title())
+        for child in self.days_frame.winfo_children():
+            child.destroy()
+
+        cal = calendar.Calendar(firstweekday=0)
+        weeks = cal.monthdayscalendar(self.current_year, self.current_month)
+        for r, week in enumerate(weeks):
+            for c, day in enumerate(week):
+                if day == 0:
+                    tk.Label(
+                        self.days_frame,
+                        text="",
+                        width=4,
+                        bg=PALETA["superficie"],
+                    ).grid(row=r, column=c, padx=1, pady=1)
+                    continue
+
+                tk.Button(
+                    self.days_frame,
+                    text=str(day),
+                    width=4,
+                    command=lambda d=day: self._pick_day(d),
+                    bg=PALETA["superficie"],
+                    fg=PALETA["texto"],
+                    activebackground=PALETA["primario_claro"],
+                    relief=tk.SOLID,
+                    bd=1,
+                    font=("Segoe UI", 9),
+                    cursor="hand2",
+                ).grid(row=r, column=c, padx=1, pady=1)
+
+    def _pick_day(self, day: int) -> None:
+        selected = dt.date(self.current_year, self.current_month, day)
+        self._on_select_callback(selected)
+        self.destroy()
+
+    def _select_today(self) -> None:
+        today = dt.date.today()
+        self._on_select_callback(today)
+        self.destroy()
 
 
 class AutomatizadorGUI(tk.Tk):
@@ -58,6 +241,8 @@ class AutomatizadorGUI(tk.Tk):
             "msewjo": tk.StringVar(),
             "turno": tk.StringVar(),
             "mensual": tk.StringVar(),
+            "fecha_desde": tk.StringVar(),
+            "fecha_hasta": tk.StringVar(),
             "matriz": tk.StringVar(value=diccionario_guardado),
             "output": tk.StringVar(value=str(Path("output").resolve())),
         }
@@ -69,6 +254,7 @@ class AutomatizadorGUI(tk.Tk):
             value="Selecciona etapa, archivos y presiona PROCESAR."
         )
         self.field_rows: dict[str, tk.Frame] = {}
+        self.date_buttons: dict[str, tk.Button] = {}
         self.process_btn: tk.Button
 
         self._build_ui()
@@ -195,8 +381,72 @@ class AutomatizadorGUI(tk.Tk):
         fields_container = tk.Frame(card, bg=PALETA["superficie"])
         fields_container.pack(fill="both", expand=True, padx=18, pady=(2, 8))
 
-        field_order = ["msewjo", "turno", "mensual", "output"]
+        field_order = ["msewjo", "turno", "mensual", "fecha_desde", "fecha_hasta", "output"]
         for idx, key in enumerate(field_order):
+            if key == "fecha_hasta":
+                continue
+
+            if key == "fecha_desde":
+                row_frame = tk.Frame(fields_container, bg=PALETA["superficie"])
+                row_frame.grid(row=idx, column=0, sticky="we", pady=6)
+                self.field_rows["fecha_desde"] = row_frame
+                self.field_rows["fecha_hasta"] = row_frame
+
+                tk.Label(
+                    row_frame,
+                    text=CAMPO_META["fecha_desde"]["label"],
+                    width=18,
+                    anchor="w",
+                    bg=PALETA["superficie"],
+                    fg=PALETA["gris_oscuro"],
+                    font=("Segoe UI", 10, "bold"),
+                ).grid(row=0, column=0, sticky="w")
+
+                btn_desde = tk.Button(
+                    row_frame,
+                    text=self._calendar_button_text("fecha_desde"),
+                    width=12,
+                    command=lambda: self._open_calendar_for("fecha_desde"),
+                    bg=PALETA["superficie"],
+                    fg=PALETA["primario_oscuro"],
+                    activebackground=PALETA["primario"],
+                    activeforeground=PALETA["superficie"],
+                    relief=tk.SOLID,
+                    bd=1,
+                    font=("Segoe UI", 10),
+                    cursor="hand2",
+                )
+                btn_desde.grid(row=0, column=1, padx=(8, 24), sticky="w")
+                self.date_buttons["fecha_desde"] = btn_desde
+
+                tk.Label(
+                    row_frame,
+                    text=CAMPO_META["fecha_hasta"]["label"],
+                    width=12,
+                    anchor="w",
+                    bg=PALETA["superficie"],
+                    fg=PALETA["gris_oscuro"],
+                    font=("Segoe UI", 10, "bold"),
+                ).grid(row=0, column=2, sticky="w")
+
+                btn_hasta = tk.Button(
+                    row_frame,
+                    text=self._calendar_button_text("fecha_hasta"),
+                    width=12,
+                    command=lambda: self._open_calendar_for("fecha_hasta"),
+                    bg=PALETA["superficie"],
+                    fg=PALETA["primario_oscuro"],
+                    activebackground=PALETA["primario"],
+                    activeforeground=PALETA["superficie"],
+                    relief=tk.SOLID,
+                    bd=1,
+                    font=("Segoe UI", 10),
+                    cursor="hand2",
+                )
+                btn_hasta.grid(row=0, column=3, padx=(8, 0), sticky="w")
+                self.date_buttons["fecha_hasta"] = btn_hasta
+                continue
+
             meta = CAMPO_META[key]
             row_frame = tk.Frame(fields_container, bg=PALETA["superficie"])
             row_frame.grid(row=idx, column=0, sticky="we", pady=6)
@@ -212,37 +462,57 @@ class AutomatizadorGUI(tk.Tk):
                 font=("Segoe UI", 10, "bold"),
             ).grid(row=0, column=0, sticky="w")
 
-            entry = tk.Entry(
-                row_frame,
-                textvariable=self.vars[key],
-                width=66,
-                relief=tk.SOLID,
-                bd=1,
-                highlightthickness=1,
-                highlightbackground=PALETA["gris_medio"],
-                highlightcolor=PALETA["primario_oscuro"],
-                font=("Segoe UI", 10),
-                bg=PALETA["superficie"],
-                fg=PALETA["texto"],
-                insertbackground=PALETA["texto"],
-            )
-            entry.grid(row=0, column=1, padx=8, sticky="we")
+            selector = meta.get("selector", "none")
+            if selector in {"file", "dir", "none"}:
+                entry = tk.Entry(
+                    row_frame,
+                    textvariable=self.vars[key],
+                    width=66,
+                    relief=tk.SOLID,
+                    bd=1,
+                    highlightthickness=1,
+                    highlightbackground=PALETA["gris_medio"],
+                    highlightcolor=PALETA["primario_oscuro"],
+                    font=("Segoe UI", 10),
+                    bg=PALETA["superficie"],
+                    fg=PALETA["texto"],
+                    insertbackground=PALETA["texto"],
+                )
+                entry.grid(row=0, column=1, padx=8, sticky="we")
 
-            handler = self._select_file if meta["selector"] == "file" else self._select_dir
-            tk.Button(
-                row_frame,
-                text="Buscar",
-                width=12,
-                command=lambda k=key, h=handler: h(k),
-                bg=PALETA["superficie"],
-                fg=PALETA["primario_oscuro"],
-                activebackground=PALETA["primario"],
-                activeforeground=PALETA["superficie"],
-                relief=tk.SOLID,
-                bd=1,
-                font=("Segoe UI", 10),
-                cursor="hand2",
-            ).grid(row=0, column=2, padx=(2, 0))
+            if selector in {"file", "dir"}:
+                handler = self._select_file if selector == "file" else self._select_dir
+                tk.Button(
+                    row_frame,
+                    text="Buscar",
+                    width=12,
+                    command=lambda k=key, h=handler: h(k),
+                    bg=PALETA["superficie"],
+                    fg=PALETA["primario_oscuro"],
+                    activebackground=PALETA["primario"],
+                    activeforeground=PALETA["superficie"],
+                    relief=tk.SOLID,
+                    bd=1,
+                    font=("Segoe UI", 10),
+                    cursor="hand2",
+                ).grid(row=0, column=2, padx=(2, 0))
+            elif selector == "date":
+                button = tk.Button(
+                    row_frame,
+                    text=self._calendar_button_text(key),
+                    width=12,
+                    command=lambda k=key: self._open_calendar_for(k),
+                    bg=PALETA["superficie"],
+                    fg=PALETA["primario_oscuro"],
+                    activebackground=PALETA["primario"],
+                    activeforeground=PALETA["superficie"],
+                    relief=tk.SOLID,
+                    bd=1,
+                    font=("Segoe UI", 10),
+                    cursor="hand2",
+                )
+                button.grid(row=0, column=1, padx=(8, 0), sticky="w")
+                self.date_buttons[key] = button
 
             row_frame.grid_columnconfigure(1, weight=1)
 
@@ -311,6 +581,25 @@ class AutomatizadorGUI(tk.Tk):
         if path:
             self.vars[key].set(path)
 
+    def _open_calendar_for(self, key: str) -> None:
+        initial_date = self._parse_date_optional(self.vars[key].get(), CAMPO_META[key]["label"])
+        if initial_date is None:
+            initial_date = dt.date.today()
+
+        def _set_selected(value: dt.date) -> None:
+            self.vars[key].set(value.strftime("%d/%m/%Y"))
+            self._refresh_calendar_button_labels()
+
+        DatePickerDialog(self, initial_date=initial_date, on_select=_set_selected)
+
+    def _calendar_button_text(self, key: str) -> str:
+        value = self.vars[key].get().strip()
+        return value if value else "Calendario"
+
+    def _refresh_calendar_button_labels(self) -> None:
+        for key, button in self.date_buttons.items():
+            button.config(text=self._calendar_button_text(key))
+
     def _selected_stage(self) -> str:
         return ETAPAS[self.stage_label_var.get()]
 
@@ -359,13 +648,19 @@ class AutomatizadorGUI(tk.Tk):
             return []
         return ["msewjo", "turno", "mensual"]
 
+    def _optional_fields_for_stage(self, stage: str) -> list[str]:
+        if stage in {"etapa_2", "completo"}:
+            return ["fecha_desde", "fecha_hasta"]
+        return []
+
     def _on_stage_change(self, *args: object) -> None:
         self._refresh_fields_visibility()
 
     def _refresh_fields_visibility(self) -> None:
         stage = self._selected_stage()
         required_keys = set(self._required_files_for_stage(stage))
-        visible_keys = required_keys | {"output"}
+        optional_keys = set(self._optional_fields_for_stage(stage))
+        visible_keys = required_keys | optional_keys | {"output"}
 
         for key, row in self.field_rows.items():
             if key in visible_keys:
@@ -387,9 +682,27 @@ class AutomatizadorGUI(tk.Tk):
                 if required_labels
                 else "Diccionarios (boton superior)"
             )
+        if stage in {"etapa_2", "completo"}:
+            required_labels = (
+                f"{required_labels}, Rango semanal opcional (dd/mm/aaaa)"
+                if required_labels
+                else "Rango semanal opcional (dd/mm/aaaa)"
+            )
         self.requirements_var.set(f"Requeridos para esta etapa: {required_labels}.")
         self._refresh_diccionario_badge()
+        self._refresh_calendar_button_labels()
         self.status_var.set("Listo para procesar.")
+
+    def _parse_date_optional(self, value: str, field_label: str) -> dt.date | None:
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return dt.datetime.strptime(text, "%d/%m/%Y").date()
+        except ValueError as exc:
+            raise ValueError(
+                f"Fecha invalida en '{field_label}': '{text}'. Usa formato dd/mm/aaaa."
+            ) from exc
 
     def _validate_inputs(self, stage: str) -> None:
         for key in self._required_files_for_stage(stage):
@@ -422,6 +735,24 @@ class AutomatizadorGUI(tk.Tk):
             if not turno_aplicado.exists():
                 raise FileNotFoundError(f"No existe archivo previo: {turno_aplicado}")
 
+        if stage in {"etapa_2", "completo"}:
+            fecha_desde = self._parse_date_optional(
+                self.vars["fecha_desde"].get(), CAMPO_META["fecha_desde"]["label"]
+            )
+            fecha_hasta = self._parse_date_optional(
+                self.vars["fecha_hasta"].get(), CAMPO_META["fecha_hasta"]["label"]
+            )
+            if fecha_desde is not None and fecha_hasta is None:
+                fecha_hasta = fecha_desde
+            if fecha_hasta is not None and fecha_desde is None:
+                fecha_desde = fecha_hasta
+            if (
+                fecha_desde is not None
+                and fecha_hasta is not None
+                and fecha_desde > fecha_hasta
+            ):
+                raise ValueError("Fecha desde no puede ser mayor que fecha hasta.")
+
     def _format_result_lines(self, result: dict) -> str:
         lines = []
         for path in result.values():
@@ -449,6 +780,8 @@ class AutomatizadorGUI(tk.Tk):
                     ruta_programa_mensual=self.vars["mensual"].get(),
                     ruta_matriz_clasificacion=self.vars["matriz"].get(),
                     carpeta_salida=self.vars["output"].get(),
+                    fecha_desde=self.vars["fecha_desde"].get(),
+                    fecha_hasta=self.vars["fecha_hasta"].get(),
                 )
             elif stage == "etapa_3":
                 result = ejecutar_etapa_3_clasificacion(
@@ -462,6 +795,8 @@ class AutomatizadorGUI(tk.Tk):
                     ruta_programa_mensual=self.vars["mensual"].get(),
                     ruta_matriz_clasificacion=self.vars["matriz"].get(),
                     carpeta_salida=self.vars["output"].get(),
+                    fecha_desde=self.vars["fecha_desde"].get(),
+                    fecha_hasta=self.vars["fecha_hasta"].get(),
                 )
 
             self.status_var.set(f"{self.stage_label_var.get()} completada.")

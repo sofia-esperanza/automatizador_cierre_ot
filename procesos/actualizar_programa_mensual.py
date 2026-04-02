@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -418,7 +419,117 @@ def _inferir_hoja_mensual_desde_semanal(semanal_df: pd.DataFrame) -> str | None:
     return f"{mes} {int(p.year)}"
 
 
-def _seleccionar_hoja_mensual(wb, hoja_preferida: str | None = None):
+def _parse_mes_anio_desde_titulo_hoja(sheet_title: str) -> tuple[int, int] | None:
+    normalized_title = normalize_text(sheet_title)
+    month_name_to_number = {normalize_text(name): month for month, name in MESES_ES.items()}
+
+    month = None
+    for token in re.split(r"[^A-Z0-9]+", normalized_title):
+        if token in month_name_to_number:
+            month = month_name_to_number[token]
+            break
+
+    year = None
+    year_match = re.search(r"(20\d{2})", normalized_title)
+    if year_match:
+        year = int(year_match.group(1))
+
+    if month is None or year is None:
+        return None
+    return year, month
+
+
+def _build_sheet_title_from_year_month(year: int, month: int) -> str:
+    mes = MESES_ES.get(month)
+    if mes is None:
+        raise ValueError(f"Mes invalido para construir hoja mensual: {month}")
+    return f"{mes} {year}"
+
+
+def _parse_mes_anio_desde_texto(text: str) -> tuple[int, int] | None:
+    normalized_text = normalize_text(text)
+    month_name_to_number = {normalize_text(name): month for month, name in MESES_ES.items()}
+
+    month = None
+    for token in re.split(r"[^A-Z0-9]+", normalized_text):
+        if token in month_name_to_number:
+            month = month_name_to_number[token]
+            break
+
+    if month is None:
+        return None
+
+    year = None
+    year_match = re.search(r"(20\d{2})", normalized_text)
+    if year_match:
+        year = int(year_match.group(1))
+    else:
+        short_year_match = re.search(r"\b(\d{2})\b", normalized_text)
+        if short_year_match:
+            year = 2000 + int(short_year_match.group(1))
+
+    if year is None:
+        return None
+    return year, month
+
+
+def _filtrar_df_por_mes_anio(
+    df: pd.DataFrame,
+    year: int,
+    month: int,
+) -> pd.DataFrame:
+    if df.empty or "FECHA_REFERENCIA" not in df.columns:
+        return df.copy()
+    fecha_series = pd.to_datetime(df["FECHA_REFERENCIA"], errors="coerce")
+    years = fecha_series.dt.year
+    fecha_series = fecha_series.where(years.between(2000, 2100))
+    if not fecha_series.notna().any():
+        return df.copy()
+    mask = fecha_series.dt.year.eq(year) & fecha_series.dt.month.eq(month)
+    mask = mask.fillna(False)
+    return df[mask].copy()
+
+
+def _filtrar_df_por_rango_fechas(
+    df: pd.DataFrame,
+    fecha_desde: dt.date,
+    fecha_hasta: dt.date,
+) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    if "FECHA_REFERENCIA" in df.columns:
+        fecha_series = pd.to_datetime(df["FECHA_REFERENCIA"], errors="coerce")
+        years = fecha_series.dt.year
+        fecha_series = fecha_series.where(years.between(2000, 2100))
+        if fecha_series.notna().any():
+            desde_ts = pd.Timestamp(fecha_desde)
+            hasta_ts = pd.Timestamp(fecha_hasta)
+            mask = fecha_series.ge(desde_ts) & fecha_series.le(hasta_ts)
+            mask = mask.fillna(False)
+            return df[mask].copy()
+
+    # Fallback para formatos semanales que solo traen numero de dia (sin fecha completa).
+    if "DIA" not in df.columns:
+        return df.copy()
+
+    dia_series = pd.to_numeric(df["DIA"], errors="coerce")
+    if (
+        fecha_desde.year == fecha_hasta.year
+        and fecha_desde.month == fecha_hasta.month
+        and fecha_desde.day <= fecha_hasta.day
+    ):
+        mask = dia_series.between(fecha_desde.day, fecha_hasta.day, inclusive="both")
+    else:
+        mask = dia_series.eq(fecha_desde.day)
+    mask = mask.fillna(False)
+    return df[mask].copy()
+
+
+def _seleccionar_hoja_mensual(
+    wb,
+    hoja_preferida: str | None = None,
+    strict_preferida: bool = False,
+):
     if hoja_preferida:
         ws_preferida = _select_sheet_by_name(wb, hoja_preferida)
         if ws_preferida is not None:
@@ -429,6 +540,12 @@ def _seleccionar_hoja_mensual(wb, hoja_preferida: str | None = None):
                 raise ValueError(
                     f"La hoja mensual '{ws_preferida.title}' no tiene estructura valida."
                 ) from exc
+        if strict_preferida:
+            disponibles = ", ".join(wb.sheetnames)
+            raise ValueError(
+                f"No se encontro la hoja mensual requerida '{hoja_preferida}'. "
+                f"Hojas disponibles: {disponibles}"
+            )
 
     best = None
     best_days = -1
@@ -522,10 +639,21 @@ def actualizar_programa_mensual(
     path_programa_mensual: Path | str,
     output_path_programa_mensual: Path | str,
     path_diccionario: Path | str,
+    fecha_desde: dt.date | None = None,
+    fecha_hasta: dt.date | None = None,
 ) -> pd.DataFrame:
     print("[3/5] Actualizando programa mensual...")
     output_path = Path(output_path_programa_mensual)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if fecha_desde is not None and fecha_hasta is None:
+        fecha_hasta = fecha_desde
+    if fecha_hasta is not None and fecha_desde is None:
+        fecha_desde = fecha_hasta
+    if fecha_desde is not None and fecha_hasta is not None and fecha_desde > fecha_hasta:
+        raise ValueError(
+            "Rango de fechas invalido: 'fecha_desde' no puede ser mayor que 'fecha_hasta'."
+        )
 
     semanal_df, hoja_semanal_usada = _leer_semanal_horizontal(
         path_programa_turno, hoja_preferida="Control SGS"
@@ -540,15 +668,76 @@ def actualizar_programa_mensual(
         & work_df["ESTADO"].map(safe_str).ne("")
     ].copy()
 
+    hoja_mensual_objetivo = None
+    origen_hoja_objetivo = "auto"
+    if fecha_desde is not None and fecha_hasta is not None:
+        if fecha_desde.year != fecha_hasta.year or fecha_desde.month != fecha_hasta.month:
+            raise ValueError(
+                "El rango de fechas manual abarca mas de un mes. "
+                "Para asegurar cruce correcto por hoja mensual, ejecuta una vez por mes "
+                "(ej: 26/03/2026-31/03/2026 y luego 01/04/2026-01/04/2026)."
+            )
+        hoja_mensual_objetivo = _build_sheet_title_from_year_month(
+            fecha_desde.year, fecha_desde.month
+        )
+        origen_hoja_objetivo = "rango_fechas"
+
+    if hoja_mensual_objetivo is None:
+        periodo_desde_nombre = _parse_mes_anio_desde_texto(Path(path_programa_mensual).stem)
+        if periodo_desde_nombre is not None:
+            y, m = periodo_desde_nombre
+            hoja_mensual_objetivo = _build_sheet_title_from_year_month(y, m)
+            origen_hoja_objetivo = "nombre_archivo"
+
+    if hoja_mensual_objetivo is None:
+        hoja_mensual_objetivo = _inferir_hoja_mensual_desde_semanal(semanal_df)
+        if hoja_mensual_objetivo is not None:
+            origen_hoja_objetivo = "semanal"
+
+    wb = load_workbook(Path(path_programa_mensual))
+    strict_preferida = origen_hoja_objetivo in {"rango_fechas", "nombre_archivo"}
+    ws, parsed = _seleccionar_hoja_mensual(
+        wb,
+        hoja_preferida=hoja_mensual_objetivo,
+        strict_preferida=strict_preferida,
+    )
+    codigo_col, matriz_col, day_to_col, data_start_row, max_row = parsed
+
+    fuera_de_periodo = 0
+    fechas_completas_disponibles = False
+    if "FECHA_REFERENCIA" in work_df.columns:
+        fecha_series_work = pd.to_datetime(work_df["FECHA_REFERENCIA"], errors="coerce")
+        years = fecha_series_work.dt.year
+        fecha_series_work = fecha_series_work.where(years.between(2000, 2100))
+        fechas_completas_disponibles = fecha_series_work.notna().any()
+
+    if fecha_desde is not None and fecha_hasta is not None:
+        work_before = len(work_df)
+        work_df = _filtrar_df_por_rango_fechas(work_df, fecha_desde, fecha_hasta)
+        actividades_no_clasificadas_df = _filtrar_df_por_rango_fechas(
+            actividades_no_clasificadas_df, fecha_desde, fecha_hasta
+        )
+        fuera_de_periodo = work_before - len(work_df)
+    else:
+        periodo_hoja = _parse_mes_anio_desde_titulo_hoja(ws.title)
+        if periodo_hoja is not None:
+            if not fechas_completas_disponibles:
+                raise ValueError(
+                    "El programa semanal no trae fechas completas (solo numero de dia). "
+                    "Para evitar cruces de mes incorrectos, selecciona Fecha desde / Fecha hasta."
+                )
+            year, month = periodo_hoja
+            work_before = len(work_df)
+            work_df = _filtrar_df_por_mes_anio(work_df, year, month)
+            actividades_no_clasificadas_df = _filtrar_df_por_mes_anio(
+                actividades_no_clasificadas_df, year, month
+            )
+            fuera_de_periodo = work_before - len(work_df)
+
     duplicados_df = work_df[
         work_df.duplicated(subset=["CODIGO", "MATRIZ", "DIA"], keep=False)
     ].copy()
     work_df = work_df.drop_duplicates(subset=["CODIGO", "MATRIZ", "DIA"], keep="last")
-
-    hoja_mensual_objetivo = _inferir_hoja_mensual_desde_semanal(semanal_df)
-    wb = load_workbook(Path(path_programa_mensual))
-    ws, parsed = _seleccionar_hoja_mensual(wb, hoja_preferida=hoja_mensual_objetivo)
-    codigo_col, matriz_col, day_to_col, data_start_row, max_row = parsed
 
     row_lookup: Dict[tuple[str, str], int] = {}
     matrices_por_codigo: Dict[str, set[str]] = {}
@@ -635,7 +824,13 @@ def actualizar_programa_mensual(
         else:
             no_actualizados_otro += 1
 
-    wb.save(output_path)
+    try:
+        wb.save(output_path)
+    except PermissionError as exc:
+        raise PermissionError(
+            "No se pudo guardar el archivo de salida porque esta en uso: "
+            f"{output_path}. Cierra el Excel abierto (y su vista previa) y vuelve a intentar."
+        ) from exc
 
     no_cruzados_df = pd.DataFrame(
         no_cruzados,
@@ -668,15 +863,17 @@ def actualizar_programa_mensual(
             ]
         )
 
-    save_dataframe_to_excel(no_cruzados_df, output_path.parent / "no_cruzados.xlsx")
+    interno_dir = output_path.parent / "_interno"
+    interno_dir.mkdir(parents=True, exist_ok=True)
+
+    save_dataframe_to_excel(no_cruzados_df, interno_dir / "no_cruzados.xlsx")
     save_dataframe_to_excel(
         actividades_no_clasificadas_df,
-        output_path.parent / "actividades_no_clasificadas.xlsx",
+        interno_dir / "actividades_no_clasificadas.xlsx",
     )
-    save_dataframe_to_excel(duplicados_df, output_path.parent / "duplicados.xlsx")
     save_dataframe_to_excel(
         diagnostico_no_cruzados_df,
-        output_path.parent / "diagnostico_no_cruzados_rapido.xlsx",
+        interno_dir / "diagnostico_no_cruzados_rapido.xlsx",
     )
 
     aplicados_df = pd.DataFrame(
@@ -694,11 +891,18 @@ def actualizar_programa_mensual(
 
     print(
         "[3/5] Hojas usadas: "
-        f"semanal='{hoja_semanal_usada}' | mensual='{ws.title}' (objetivo='{hoja_mensual_objetivo or 'auto'}')"
+        f"semanal='{hoja_semanal_usada}' | mensual='{ws.title}' "
+        f"(objetivo='{hoja_mensual_objetivo or 'auto'}', origen='{origen_hoja_objetivo}')"
     )
+    if fecha_desde is not None and fecha_hasta is not None:
+        print(
+            "[3/5] Filtro de fechas manual aplicado: "
+            f"{fecha_desde.strftime('%d/%m/%Y')} -> {fecha_hasta.strftime('%d/%m/%Y')}"
+        )
     print(
         "[3/5] Semanal total: "
         f"{len(semanal_df)} | clasificados matriz: {(semanal_df['MATRIZ'].map(safe_str) != '').sum()} "
+        f"| fuera de periodo hoja mensual: {fuera_de_periodo} "
         f"| aplicados mensual: {len(aplicados_df)} | no cruzados: {len(no_cruzados_df)} "
         f"| actividades no clasificadas: {len(actividades_no_clasificadas_df)} "
         f"| duplicados: {len(duplicados_df)} | protegidos sin cambio: {protegidos} "

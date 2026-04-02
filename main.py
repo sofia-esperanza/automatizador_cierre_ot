@@ -19,12 +19,37 @@ TEMP_DIRNAME = "_temp"
 ETAPA_1_DIRNAME = "etapa_1_limpieza_base"
 ETAPA_2_DIRNAME = "etapa_2_actualizacion_mensual"
 ETAPA_3_DIRNAME = "etapa_3_clasificacion"
+ETAPA_2_INTERNO_DIRNAME = "_interno"
 
 
 def _stage_dir(carpeta_salida: str | Path, stage_dirname: str) -> Path:
     stage_dir = Path(carpeta_salida) / TEMP_DIRNAME / stage_dirname
     stage_dir.mkdir(parents=True, exist_ok=True)
     return stage_dir
+
+
+def _parse_fecha_usuario(value: str | dt.date | None, campo: str) -> dt.date | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    formatos = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"]
+    for formato in formatos:
+        try:
+            return dt.datetime.strptime(text, formato).date()
+        except ValueError:
+            continue
+
+    raise ValueError(
+        f"Fecha invalida en '{campo}': '{text}'. Usa formato dd/mm/aaaa."
+    )
 
 
 def ejecutar_etapa_1_limpieza_base(
@@ -75,9 +100,24 @@ def ejecutar_etapa_2_actualizar_mensual(
     ruta_programa_mensual: str | Path,
     ruta_matriz_clasificacion: str | Path,
     carpeta_salida: str | Path,
+    fecha_desde: str | dt.date | None = None,
+    fecha_hasta: str | dt.date | None = None,
 ) -> Dict[str, Path]:
     print("[Etapa 2] Actualizacion programa mensual...")
     stage_dir = _stage_dir(carpeta_salida, ETAPA_2_DIRNAME)
+
+    fecha_desde_parsed = _parse_fecha_usuario(fecha_desde, "fecha_desde")
+    fecha_hasta_parsed = _parse_fecha_usuario(fecha_hasta, "fecha_hasta")
+    if fecha_desde_parsed is not None and fecha_hasta_parsed is None:
+        fecha_hasta_parsed = fecha_desde_parsed
+    if fecha_hasta_parsed is not None and fecha_desde_parsed is None:
+        fecha_desde_parsed = fecha_hasta_parsed
+    if (
+        fecha_desde_parsed is not None
+        and fecha_hasta_parsed is not None
+        and fecha_desde_parsed > fecha_hasta_parsed
+    ):
+        raise ValueError("fecha_desde no puede ser mayor que fecha_hasta.")
 
     mensual_actualizado_path = stage_dir / "programa_mensual_actualizado.xlsx"
     df_turno_aplicado = actualizar_programa_mensual(
@@ -85,21 +125,38 @@ def ejecutar_etapa_2_actualizar_mensual(
         ruta_programa_mensual,
         mensual_actualizado_path,
         ruta_matriz_clasificacion,
+        fecha_desde=fecha_desde_parsed,
+        fecha_hasta=fecha_hasta_parsed,
     )
+    interno_dir = stage_dir / ETAPA_2_INTERNO_DIRNAME
+    interno_dir.mkdir(parents=True, exist_ok=True)
     registros_turno_aplicado_path = save_dataframe_to_excel(
-        df_turno_aplicado, stage_dir / "registros_turno_aplicado.xlsx"
+        df_turno_aplicado, interno_dir / "registros_turno_aplicado.xlsx"
     )
-    no_cruzados_path = stage_dir / "no_cruzados.xlsx"
-    actividades_no_clasificadas_path = stage_dir / "actividades_no_clasificadas.xlsx"
-    duplicados_path = stage_dir / "duplicados.xlsx"
-    diagnostico_no_cruzados_path = stage_dir / "diagnostico_no_cruzados_rapido.xlsx"
+    # Limpia artefactos antiguos de versiones previas para reducir ruido visual.
+    legacy_registros = stage_dir / "registros_turno_aplicado.xlsx"
+    if legacy_registros.exists():
+        legacy_registros.unlink()
+    legacy_duplicados = stage_dir / "duplicados.xlsx"
+    if legacy_duplicados.exists():
+        legacy_duplicados.unlink()
+    legacy_no_cruzados = stage_dir / "no_cruzados.xlsx"
+    if legacy_no_cruzados.exists():
+        legacy_no_cruzados.unlink()
+    legacy_actividades = stage_dir / "actividades_no_clasificadas.xlsx"
+    if legacy_actividades.exists():
+        legacy_actividades.unlink()
+    legacy_diag = stage_dir / "diagnostico_no_cruzados_rapido.xlsx"
+    if legacy_diag.exists():
+        legacy_diag.unlink()
+    no_cruzados_path = interno_dir / "no_cruzados.xlsx"
+    actividades_no_clasificadas_path = interno_dir / "actividades_no_clasificadas.xlsx"
+    diagnostico_no_cruzados_path = interno_dir / "diagnostico_no_cruzados_rapido.xlsx"
 
     return {
         "programa_mensual_actualizado": mensual_actualizado_path,
-        "registros_turno_aplicado": registros_turno_aplicado_path,
         "no_cruzados": no_cruzados_path,
         "actividades_no_clasificadas": actividades_no_clasificadas_path,
-        "duplicados": duplicados_path,
         "diagnostico_no_cruzados_rapido": diagnostico_no_cruzados_path,
     }
 
@@ -122,8 +179,16 @@ def ejecutar_etapa_3_clasificacion(
             Path(carpeta_salida)
             / TEMP_DIRNAME
             / ETAPA_2_DIRNAME
+            / ETAPA_2_INTERNO_DIRNAME
             / "registros_turno_aplicado.xlsx"
         )
+        if not Path(ruta_registros_turno_aplicado).exists():
+            ruta_registros_turno_aplicado = (
+                Path(carpeta_salida)
+                / TEMP_DIRNAME
+                / ETAPA_2_DIRNAME
+                / "registros_turno_aplicado.xlsx"
+            )
 
     ruta_cierre_base = Path(ruta_cierre_base)
     ruta_registros_turno_aplicado = Path(ruta_registros_turno_aplicado)
@@ -178,6 +243,8 @@ def ejecutar_flujo(
     ruta_programa_mensual: str | Path,
     ruta_matriz_clasificacion: str | Path,
     carpeta_salida: str | Path,
+    fecha_desde: str | dt.date | None = None,
+    fecha_hasta: str | dt.date | None = None,
 ) -> Dict[str, Path]:
     print("Iniciando procesamiento completo...")
     etapa_1 = ejecutar_etapa_1_limpieza_base(
@@ -190,12 +257,21 @@ def ejecutar_flujo(
         ruta_programa_mensual,
         ruta_matriz_clasificacion,
         carpeta_salida,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+    )
+    ruta_registros_turno_aplicado = (
+        Path(carpeta_salida)
+        / TEMP_DIRNAME
+        / ETAPA_2_DIRNAME
+        / ETAPA_2_INTERNO_DIRNAME
+        / "registros_turno_aplicado.xlsx"
     )
     etapa_3 = ejecutar_etapa_3_clasificacion(
         ruta_matriz_clasificacion=ruta_matriz_clasificacion,
         carpeta_salida=carpeta_salida,
         ruta_cierre_base=etapa_1["cierre_ot_base_tecnico"],
-        ruta_registros_turno_aplicado=etapa_2["registros_turno_aplicado"],
+        ruta_registros_turno_aplicado=ruta_registros_turno_aplicado,
     )
 
     result = {**etapa_1, **etapa_2, **etapa_3}
@@ -218,6 +294,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Ruta Excel de diccionarios (hojas MATRIZ_TERRENO y COD_CIERRE)",
     )
     parser.add_argument("--output", required=True, help="Carpeta de salida")
+    parser.add_argument(
+        "--fecha-desde",
+        required=False,
+        help="Filtro opcional para etapa 2. Formato dd/mm/aaaa.",
+    )
+    parser.add_argument(
+        "--fecha-hasta",
+        required=False,
+        help="Filtro opcional para etapa 2. Formato dd/mm/aaaa.",
+    )
     return parser
 
 
@@ -229,4 +315,6 @@ if __name__ == "__main__":
         ruta_programa_mensual=args.mensual,
         ruta_matriz_clasificacion=args.matriz,
         carpeta_salida=args.output,
+        fecha_desde=args.fecha_desde,
+        fecha_hasta=args.fecha_hasta,
     )
