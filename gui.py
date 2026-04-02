@@ -381,7 +381,7 @@ class AutomatizadorGUI(tk.Tk):
         required_labels = ", ".join(
             CAMPO_META[k]["label"] for k in self._required_files_for_stage(stage)
         )
-        if stage in {"etapa_1", "etapa_3", "completo"}:
+        if stage in {"etapa_1", "etapa_2", "etapa_3", "completo"}:
             required_labels = (
                 f"{required_labels}, Diccionarios (boton superior)"
                 if required_labels
@@ -405,7 +405,7 @@ class AutomatizadorGUI(tk.Tk):
         if not output:
             raise ValueError("Falta seleccionar carpeta de salida.")
 
-        if stage in {"etapa_1", "etapa_3", "completo"}:
+        if stage in {"etapa_1", "etapa_2", "etapa_3", "completo"}:
             diccionario = self.vars["matriz"].get().strip()
             if not diccionario:
                 raise ValueError("Falta seleccionar Diccionarios (boton superior).")
@@ -447,6 +447,7 @@ class AutomatizadorGUI(tk.Tk):
                 result = ejecutar_etapa_2_actualizar_mensual(
                     ruta_programa_turno=self.vars["turno"].get(),
                     ruta_programa_mensual=self.vars["mensual"].get(),
+                    ruta_matriz_clasificacion=self.vars["matriz"].get(),
                     carpeta_salida=self.vars["output"].get(),
                 )
             elif stage == "etapa_3":

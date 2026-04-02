@@ -73,6 +73,7 @@ def ejecutar_etapa_1_limpieza_base(
 def ejecutar_etapa_2_actualizar_mensual(
     ruta_programa_turno: str | Path,
     ruta_programa_mensual: str | Path,
+    ruta_matriz_clasificacion: str | Path,
     carpeta_salida: str | Path,
 ) -> Dict[str, Path]:
     print("[Etapa 2] Actualizacion programa mensual...")
@@ -80,15 +81,26 @@ def ejecutar_etapa_2_actualizar_mensual(
 
     mensual_actualizado_path = stage_dir / "programa_mensual_actualizado.xlsx"
     df_turno_aplicado = actualizar_programa_mensual(
-        ruta_programa_turno, ruta_programa_mensual, mensual_actualizado_path
+        ruta_programa_turno,
+        ruta_programa_mensual,
+        mensual_actualizado_path,
+        ruta_matriz_clasificacion,
     )
     registros_turno_aplicado_path = save_dataframe_to_excel(
         df_turno_aplicado, stage_dir / "registros_turno_aplicado.xlsx"
     )
+    no_cruzados_path = stage_dir / "no_cruzados.xlsx"
+    actividades_no_clasificadas_path = stage_dir / "actividades_no_clasificadas.xlsx"
+    duplicados_path = stage_dir / "duplicados.xlsx"
+    diagnostico_no_cruzados_path = stage_dir / "diagnostico_no_cruzados_rapido.xlsx"
 
     return {
         "programa_mensual_actualizado": mensual_actualizado_path,
         "registros_turno_aplicado": registros_turno_aplicado_path,
+        "no_cruzados": no_cruzados_path,
+        "actividades_no_clasificadas": actividades_no_clasificadas_path,
+        "duplicados": duplicados_path,
+        "diagnostico_no_cruzados_rapido": diagnostico_no_cruzados_path,
     }
 
 
@@ -174,7 +186,10 @@ def ejecutar_flujo(
         carpeta_salida=carpeta_salida,
     )
     etapa_2 = ejecutar_etapa_2_actualizar_mensual(
-        ruta_programa_turno, ruta_programa_mensual, carpeta_salida
+        ruta_programa_turno,
+        ruta_programa_mensual,
+        ruta_matriz_clasificacion,
+        carpeta_salida,
     )
     etapa_3 = ejecutar_etapa_3_clasificacion(
         ruta_matriz_clasificacion=ruta_matriz_clasificacion,
