@@ -298,6 +298,23 @@ class AutomatizadorGUI(tk.Tk):
 
         tk.Button(
             diccionario_panel,
+            text="↻",
+            command=self._reset_inputs,
+            bg=PALETA["superficie"],
+            fg=PALETA["primario_oscuro"],
+            activebackground=PALETA["superficie"],
+            activeforeground=PALETA["primario_oscuro"],
+            relief=tk.FLAT,
+            bd=0,
+            highlightthickness=0,
+            padx=2,
+            pady=0,
+            font=("Segoe UI", 16, "bold"),
+            cursor="hand2",
+        ).pack(anchor="e", pady=(0, 6))
+
+        tk.Button(
+            diccionario_panel,
             text="Diccionarios",
             width=16,
             command=self._select_diccionario,
@@ -759,6 +776,18 @@ class AutomatizadorGUI(tk.Tk):
             lines.append(f"- {path}")
         return "\n".join(lines)
 
+    def _reset_inputs(self) -> None:
+        for key in ["msewjo", "turno", "mensual", "fecha_desde", "fecha_hasta"]:
+            self.vars[key].set("")
+        self._refresh_fields_visibility()
+        self.status_var.set("Formulario recargado. Selecciona nuevos archivos para procesar.")
+
+    def _reset_after_success(self) -> None:
+        for key in ["msewjo", "turno", "mensual", "fecha_desde", "fecha_hasta"]:
+            self.vars[key].set("")
+        self._refresh_fields_visibility()
+        self.status_var.set("Listo para un nuevo procesamiento.")
+
     def _process(self) -> None:
         try:
             stage = self._selected_stage()
@@ -805,6 +834,7 @@ class AutomatizadorGUI(tk.Tk):
                 "Se generaron los siguientes archivos:\n\n"
                 f"{self._format_result_lines(result)}",
             )
+            self._reset_after_success()
         except Exception as exc:
             self.status_var.set("Error durante el procesamiento.")
             output_dir = Path(self.vars["output"].get().strip() or "output")

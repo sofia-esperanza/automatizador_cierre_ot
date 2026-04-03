@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import datetime as dt
+import posixpath
 import re
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import pandas as pd
+from openpyxl.comments import Comment
 from openpyxl import load_workbook
+from openpyxl.utils.cell import coordinate_to_tuple
 
 from procesos.clasificar_cierre_ot import cargar_diccionarios
 from utils.excel_utils import save_dataframe_to_excel
@@ -34,6 +39,7 @@ MENSUAL_CODIGO_HEADERS_PRIORITY = [
 ]
 MENSUAL_MATRIZ_TERRENO_HEADER = "MATRIZ_TERRENO"
 ESTADOS_PROTEGIDOS = {"R", "NR", "RR", "S"}
+ESTADOS_CON_NOTA_EN_CELDA = {"S", "NR", "RR"}
 
 MESES_ES = {
     1: "ENERO",
@@ -140,6 +146,20 @@ def _is_estado_header(normalized_header: str) -> bool:
     return "REALIZADO" in normalized_header
 
 
+def _is_nota_header(normalized_header: str) -> bool:
+    if not normalized_header:
+        return False
+    tokens = (
+        "REVISION_TERRENO",
+        "REVISION",
+        "OBS",
+        "OBSERVACION",
+        "COMENTARIO",
+        "NOTA",
+    )
+    return any(token in normalized_header for token in tokens)
+
+
 def _select_sheet_by_name(wb, preferred_name: str):
     preferred_norm = normalize_text(preferred_name)
     for ws in wb.worksheets:
@@ -174,13 +194,13 @@ def _detectar_layout_semanal(ws) -> tuple[int, int, int, List[int]]:
 
 def _detectar_bloques_dia(
     ws, header_row: int, date_row: int, day_cols: List[int]
-) -> List[Tuple[int, dt.date | None, int, int, int | None, int]]:
+) -> List[Tuple[int, dt.date | None, int, int, int | None, int, int | None]]:
     """
     Retorna bloques diarios en formato:
-    (dia, fecha_ref, col_codigo, col_actividad, col_tarea, col_estado)
+    (dia, fecha_ref, col_codigo, col_actividad, col_tarea, col_estado, col_nota)
     """
     _, max_col = _safe_sheet_limits(ws)
-    blocks: List[Tuple[int, dt.date | None, int, int, int | None, int]] = []
+    blocks: List[Tuple[int, dt.date | None, int, int, int | None, int, int | None]] = []
 
     for idx, day_col in enumerate(day_cols):
         day_value = ws.cell(row=date_row, column=day_col).value
@@ -195,6 +215,7 @@ def _detectar_bloques_dia(
         actividad_col = None
         tarea_col = None
         estado_col = None
+        nota_col = None
 
         for col in range(day_col, search_end + 1):
             header = normalize_column_name(ws.cell(row=header_row, column=col).value)
@@ -210,13 +231,123 @@ def _detectar_bloques_dia(
                 continue
             if estado_col is None and _is_estado_header(header):
                 estado_col = col
+            if nota_col is None and _is_nota_header(header):
+                nota_col = col
 
         if actividad_col is None or estado_col is None:
             continue
 
-        blocks.append((day, fecha_ref, day_col, actividad_col, tarea_col, estado_col))
+        blocks.append((day, fecha_ref, day_col, actividad_col, tarea_col, estado_col, nota_col))
 
     return blocks
+
+
+def _extract_cell_comment_text(cell) -> str:
+    comment = getattr(cell, "comment", None)
+    if comment is None or not getattr(comment, "text", None):
+        return ""
+    text = safe_str(comment.text)
+    normalized = normalize_text(text)
+    if not normalized:
+        return ""
+    # openpyxl no puede leer comentarios encadenados (threaded) y devuelve texto placeholder.
+    if "COMENTARIO ENCADENADO" in normalized and "VERSION DE EXCEL LE PERMITE LEER" in normalized:
+        return ""
+    return text
+
+
+def _resolve_zip_relative(base_file: str, target: str) -> str:
+    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(base_file), target))
+    return resolved.lstrip("/")
+
+
+def _load_threaded_comments_by_sheet(
+    xlsx_path: Path | str,
+) -> Dict[str, Dict[Tuple[int, int], str]]:
+    """
+    Retorna comentarios encadenados por hoja y coordenada:
+    {
+      "CONTROL SGS": {(fila, col): "texto comentario", ...},
+      ...
+    }
+    """
+    result: Dict[str, Dict[Tuple[int, int], str]] = {}
+    try:
+        with zipfile.ZipFile(Path(xlsx_path)) as zf:
+            workbook_xml = ET.fromstring(zf.read("xl/workbook.xml"))
+            wb_rels_xml = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+
+            ns_main = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+            ns_rel = {"r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
+            ns_pkg_rel = {"pr": "http://schemas.openxmlformats.org/package/2006/relationships"}
+            ns_thread = {
+                "tc": "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments"
+            }
+
+            rel_id_to_target: Dict[str, str] = {}
+            for rel in wb_rels_xml.findall("pr:Relationship", ns_pkg_rel):
+                rel_id = rel.attrib.get("Id", "")
+                target = rel.attrib.get("Target", "")
+                if rel_id and target:
+                    rel_id_to_target[rel_id] = _resolve_zip_relative("xl/workbook.xml", target)
+
+            for sheet in workbook_xml.findall("m:sheets/m:sheet", ns_main):
+                sheet_name = safe_str(sheet.attrib.get("name", ""))
+                rel_id = safe_str(sheet.attrib.get(f"{{{ns_rel['r']}}}id", ""))
+                sheet_target = rel_id_to_target.get(rel_id, "")
+                if not sheet_name or not sheet_target:
+                    continue
+
+                sheet_rels = (
+                    posixpath.dirname(sheet_target)
+                    + "/_rels/"
+                    + posixpath.basename(sheet_target)
+                    + ".rels"
+                )
+                if sheet_rels not in zf.namelist():
+                    continue
+
+                sheet_rels_xml = ET.fromstring(zf.read(sheet_rels))
+                threaded_targets: List[str] = []
+                for rel in sheet_rels_xml.findall("pr:Relationship", ns_pkg_rel):
+                    rel_type = safe_str(rel.attrib.get("Type", ""))
+                    target = safe_str(rel.attrib.get("Target", ""))
+                    if not target:
+                        continue
+                    if "threadedComment" in rel_type:
+                        threaded_targets.append(_resolve_zip_relative(sheet_target, target))
+
+                if not threaded_targets:
+                    continue
+
+                sheet_comments: Dict[Tuple[int, int], str] = {}
+                for threaded_target in threaded_targets:
+                    if threaded_target not in zf.namelist():
+                        continue
+                    threaded_xml = ET.fromstring(zf.read(threaded_target))
+                    for item in threaded_xml.findall("tc:threadedComment", ns_thread):
+                        ref = safe_str(item.attrib.get("ref", ""))
+                        if not ref:
+                            continue
+                        text_node = item.find("tc:text", ns_thread)
+                        text = safe_str(text_node.text if text_node is not None else "")
+                        if not text:
+                            continue
+                        row, col = coordinate_to_tuple(ref)
+                        current = sheet_comments.get((row, col), "")
+                        if text in current:
+                            continue
+                        sheet_comments[(row, col)] = (
+                            f"{current}\n{text}" if current else text
+                        )
+
+                if sheet_comments:
+                    result[normalize_text(sheet_name)] = sheet_comments
+    except Exception:
+        # Si falla la lectura XML, continua sin comentarios encadenados.
+        return {}
+
+    return result
 
 
 def _leer_semanal_horizontal(
@@ -224,7 +355,8 @@ def _leer_semanal_horizontal(
     hoja_preferida: str = "Control SGS",
 ) -> tuple[pd.DataFrame, str]:
     print("[3/5] Leyendo programa semanal (horizontal)...")
-    wb = load_workbook(Path(path_programa_turno), data_only=True, read_only=True)
+    threaded_comments_by_sheet = _load_threaded_comments_by_sheet(path_programa_turno)
+    wb = load_workbook(Path(path_programa_turno), data_only=True, read_only=False)
     records: List[Dict[str, object]] = []
     ws = None
     try:
@@ -242,14 +374,21 @@ def _leer_semanal_horizontal(
             raise ValueError(
                 f"No se detectaron bloques diarios validos en hoja semanal '{ws.title}'."
             )
+        threaded_comments_sheet = threaded_comments_by_sheet.get(normalize_text(ws.title), {})
 
         max_row, _ = _safe_sheet_limits(ws)
         for row in range(data_start_row, max_row + 1):
-            for day, fecha_ref, col_codigo, col_actividad, col_tarea, col_estado in blocks:
+            for day, fecha_ref, col_codigo, col_actividad, col_tarea, col_estado, col_nota in blocks:
                 codigo = safe_str(ws.cell(row=row, column=col_codigo).value)
                 actividad = safe_str(ws.cell(row=row, column=col_actividad).value)
                 tarea = safe_str(ws.cell(row=row, column=col_tarea).value) if col_tarea else ""
-                estado = safe_str(ws.cell(row=row, column=col_estado).value)
+                estado_cell = ws.cell(row=row, column=col_estado)
+                estado = safe_str(estado_cell.value)
+                nota_columna = safe_str(ws.cell(row=row, column=col_nota).value) if col_nota else ""
+                nota_comentario = _extract_cell_comment_text(estado_cell)
+                nota_threaded = safe_str(threaded_comments_sheet.get((row, col_estado), ""))
+                nota = _merge_cell_comment(nota_columna, nota_comentario)
+                nota = _merge_cell_comment(nota, nota_threaded)
 
                 if not any([actividad, tarea, estado]):
                     continue
@@ -264,6 +403,7 @@ def _leer_semanal_horizontal(
                         "ACTIVIDAD_DICCIONARIO": first_non_empty([actividad, tarea]),
                         "DIA": day,
                         "ESTADO": estado,
+                        "NOTA": nota,
                         "FECHA_REFERENCIA": fecha_ref,
                         "ORIGEN_HOJA": ws.title,
                         "ORIGEN_FILA": row,
@@ -319,7 +459,17 @@ def _clasificar_matriz(
     no_clasificadas = df[df["MATRIZ"].map(safe_str).eq("")].copy()
     if not no_clasificadas.empty:
         no_clasificadas = no_clasificadas[
-            ["CODIGO", "ACTIVIDAD", "TAREA", "ACTIVIDAD_DICCIONARIO", "DIA", "ESTADO", "ORIGEN_HOJA", "ORIGEN_FILA"]
+            [
+                "CODIGO",
+                "ACTIVIDAD",
+                "TAREA",
+                "ACTIVIDAD_DICCIONARIO",
+                "DIA",
+                "ESTADO",
+                "NOTA",
+                "ORIGEN_HOJA",
+                "ORIGEN_FILA",
+            ]
         ].drop_duplicates()
     else:
         no_clasificadas = pd.DataFrame(
@@ -330,6 +480,7 @@ def _clasificar_matriz(
                 "ACTIVIDAD_DICCIONARIO",
                 "DIA",
                 "ESTADO",
+                "NOTA",
                 "ORIGEN_HOJA",
                 "ORIGEN_FILA",
             ]
@@ -634,6 +785,34 @@ def _build_diagnostico_no_cruzados(
     return pd.DataFrame(rows, columns=columns)
 
 
+def _merge_cell_comment(existing: object, new_text: str) -> str:
+    incoming = safe_str(new_text)
+    if not incoming:
+        return safe_str(existing)
+    existing_text = safe_str(existing)
+    if not existing_text:
+        return incoming
+    if incoming in existing_text:
+        return existing_text
+    return f"{existing_text}\n{incoming}"
+
+
+def _append_nota_en_celda(cell, estado: str, nota: str) -> bool:
+    if normalize_text(estado) not in ESTADOS_CON_NOTA_EN_CELDA:
+        return False
+    incoming_note = safe_str(nota)
+    if not incoming_note:
+        return False
+
+    existing_comment = cell.comment.text if cell.comment else ""
+    merged_comment = _merge_cell_comment(existing_comment, incoming_note)
+    if merged_comment == safe_str(existing_comment):
+        return False
+
+    cell.comment = Comment(merged_comment, "automatizador_cierre_ot")
+    return True
+
+
 def actualizar_programa_mensual(
     path_programa_turno: Path | str,
     path_programa_mensual: Path | str,
@@ -772,12 +951,14 @@ def actualizar_programa_mensual(
     no_cruzados: List[Dict[str, object]] = []
     protegidos = 0
     no_actualizados_otro = 0
+    notas_agregadas = 0
 
     for _, record in work_df.iterrows():
         codigo = safe_str(record["CODIGO"])
         matriz = safe_str(record["MATRIZ"])
         dia = int(record["DIA"])
         estado = safe_str(record["ESTADO"])
+        nota = safe_str(record.get("NOTA", ""))
 
         key = normalize_key(codigo, _canonical_matriz(matriz))
         row = row_lookup.get(key)
@@ -805,21 +986,39 @@ def actualizar_programa_mensual(
         cell = ws.cell(row=row, column=col)
         valor_actual = safe_str(cell.value)
         valor_actual_norm = normalize_text(valor_actual)
+        estado_norm = normalize_text(estado)
 
         if valor_actual_norm in {"", "1"}:
             cell.value = estado
+            if _append_nota_en_celda(cell, estado, nota):
+                notas_agregadas += 1
             aplicados.append(
                 {
                     "CODIGO": codigo,
                     "MATRIZ": matriz,
                     "DIA": dia,
                     "ESTADO": estado,
+                    "NOTA": nota,
                     "ACTIVIDAD": safe_str(record["ACTIVIDAD_DICCIONARIO"]),
                     "ORIGEN_HOJA": safe_str(record["ORIGEN_HOJA"]),
                     "ORIGEN_FILA": int(record["ORIGEN_FILA"]),
                 }
             )
         elif _es_estado_protegido(valor_actual):
+            if valor_actual_norm == estado_norm and _append_nota_en_celda(cell, estado, nota):
+                notas_agregadas += 1
+                aplicados.append(
+                    {
+                        "CODIGO": codigo,
+                        "MATRIZ": matriz,
+                        "DIA": dia,
+                        "ESTADO": valor_actual,
+                        "NOTA": nota,
+                        "ACTIVIDAD": safe_str(record["ACTIVIDAD_DICCIONARIO"]),
+                        "ORIGEN_HOJA": safe_str(record["ORIGEN_HOJA"]),
+                        "ORIGEN_FILA": int(record["ORIGEN_FILA"]),
+                    }
+                )
             protegidos += 1
         else:
             no_actualizados_otro += 1
@@ -878,11 +1077,29 @@ def actualizar_programa_mensual(
 
     aplicados_df = pd.DataFrame(
         aplicados,
-        columns=["CODIGO", "MATRIZ", "DIA", "ESTADO", "ACTIVIDAD", "ORIGEN_HOJA", "ORIGEN_FILA"],
+        columns=[
+            "CODIGO",
+            "MATRIZ",
+            "DIA",
+            "ESTADO",
+            "NOTA",
+            "ACTIVIDAD",
+            "ORIGEN_HOJA",
+            "ORIGEN_FILA",
+        ],
     )
     if aplicados_df.empty:
         aplicados_df = pd.DataFrame(
-            columns=["CODIGO", "MATRIZ", "DIA", "ESTADO", "ACTIVIDAD", "ORIGEN_HOJA", "ORIGEN_FILA"]
+            columns=[
+                "CODIGO",
+                "MATRIZ",
+                "DIA",
+                "ESTADO",
+                "NOTA",
+                "ACTIVIDAD",
+                "ORIGEN_HOJA",
+                "ORIGEN_FILA",
+            ]
         )
 
     aplicados_df["PUNTO"] = aplicados_df["CODIGO"]
@@ -906,7 +1123,8 @@ def actualizar_programa_mensual(
         f"| aplicados mensual: {len(aplicados_df)} | no cruzados: {len(no_cruzados_df)} "
         f"| actividades no clasificadas: {len(actividades_no_clasificadas_df)} "
         f"| duplicados: {len(duplicados_df)} | protegidos sin cambio: {protegidos} "
-        f"| no actualizados (otro valor): {no_actualizados_otro}"
+        f"| no actualizados (otro valor): {no_actualizados_otro} "
+        f"| notas agregadas: {notas_agregadas}"
     )
 
     return aplicados_df[

@@ -1,0 +1,92 @@
+{
+  "MATRIZ": {
+    "MED DE NIVELES FREATICOS": "NF",
+    "MEDICION DE NIVELES FREATICOS": "NF",
+    "MEDICION NIVEL FREATICO": "NF",
+    "MEDICION NIVELES FREATICOS": "NF",
+    "MM DE AGUAS SUBTERRANEAS": "ASUB",
+    "MUESTREO MANUAL DE AGUAS SUBTERRANEAS": "ASUB",
+    "MM DE AGUAS SUPERFICIALES": "ASUP",
+    "MUESTREO MANUAL DE AGUA SUPERFICIAL": "ASUP",
+    "MUESTREO MANUAL DE AGUA SUPERFICIAL (AGUA POTABLE)": "ASUP",
+    "MONITOREO DE BANOS Y CASINOS": "AP",
+    "MONITOREO EN BANOS Y CASINOS": "AP",
+    "MONIT EN SALAS DE ESTACION Y TK": "AP",
+    "MONITOREO EN SALAS DE ESTACION Y TK": "AP",
+    "MM. AGUAS SUPERF. (FOTOMETRO)": "FOTOMETRO",
+    "MUESTREO M. AGUAS SUPERF (FOTOMETRO)": "FOTOMETRO",
+    "MUESTREO MANUAL DE AGUA SUPERFICIAL (FOTOMETRO)": "FOTOMETRO",
+    "MEDICION DE CAUDALES": "CAUDAL",
+    "MEDICION CAUDALES": "CAUDAL",
+    "MEDICION DE CAUDAL": "CAUDAL",
+    "MUESTREO DE RIL-AS (CALIDAD)": "AR",
+    "MUESTREO PUNTUAL DE RIL-AS": "AR",
+    "MUESTREO PUNTUAL DE RIL AS": "AR",
+    "MUESTREO DE RIL-AS": "AR",
+    "HOUSEKEEPING": "HK",
+    "MONITOREO AGUAS SERVIDAS": "AR",
+    "MUESTREO AGUAS SERVIDAS": "AR"
+  },
+  "CIERRE": {
+    "R": [
+      {
+        "keyword": "",
+        "codigo": "TT"
+      },
+      {
+        "keyword": "SECO",
+        "codigo": "TT"
+      }
+    ],
+    "RR": [
+      {
+        "keyword": "DENTRO DEL MISMO TURNO",
+        "codigo": "TT"
+      }
+    ],
+    "NR": [
+      {
+        "keyword": "",
+        "codigo": "MI"
+      }
+    ],
+    "S": [
+      {
+        "keyword": "SECO",
+        "codigo": "TT"
+      },
+      {
+        "keyword": "SIN ACCESO",
+        "codigo": "MI"
+      },
+      {
+        "keyword": "CONDICION CLIMATICA",
+        "codigo": "MI"
+      },
+      {
+        "keyword": "RIESGO EMPANTANAMIENTO",
+        "codigo": "MI"
+      },
+      {
+        "keyword": "DESMANTELADO",
+        "codigo": "MI"
+      },
+      {
+        "keyword": "CAMINO CORTADO",
+        "codigo": "MI"
+      },
+      {
+        "keyword": "INSTRUMENTADO",
+        "codigo": "MI"
+      },
+      {
+        "keyword": "PLANIFICADO POSTERIOR",
+        "codigo": "MI"
+      },
+      {
+        "keyword": "POZO DETENIDO",
+        "codigo": "MI"
+      }
+    ]
+  }
+}
