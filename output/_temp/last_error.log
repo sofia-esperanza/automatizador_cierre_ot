@@ -1,6 +1,24 @@
 Traceback (most recent call last):
-  File "C:\Users\SofíaOrtiz\Downloads\automatizador_cierre_ot\procesos\actualizar_programa_mensual.py", line 828, in actualizar_programa_mensual
-    wb.save(output_path)
+  File "C:\Users\SofíaOrtiz\Downloads\automatizador_cierre_ot\gui.py", line 920, in _process
+    result = ejecutar_etapa_3_clasificacion(
+        ruta_matriz_clasificacion=self.vars["matriz"].get(),
+    ...<6 lines>...
+        ),
+    )
+  File "C:\Users\SofíaOrtiz\Downloads\automatizador_cierre_ot\main.py", line 762, in ejecutar_etapa_3_clasificacion
+    resumen_1 = etapa3_clasificacion(
+        path_cierre_ot_base=cierre_base_input,
+    ...<3 lines>...
+        hoja_mensual=None,
+    )
+  File "C:\Users\SofíaOrtiz\Downloads\automatizador_cierre_ot\procesos\clasificar_cierre_ot.py", line 1304, in etapa3_clasificacion
+    return actualizar_cierre_ot(
+        path_cierre_ot_base=path_cierre_ot_base,
+    ...<2 lines>...
+        output_path=output_path,
+    )
+  File "C:\Users\SofíaOrtiz\Downloads\automatizador_cierre_ot\procesos\clasificar_cierre_ot.py", line 1280, in actualizar_cierre_ot
+    wb.save(output_file)
     ~~~~~~~^^^^^^^^^^^^^
   File "C:\Users\SofíaOrtiz\AppData\Local\Programs\Python\Python313\Lib\site-packages\openpyxl\workbook\workbook.py", line 386, in save
     save_workbook(self, filename)
@@ -10,25 +28,4 @@ Traceback (most recent call last):
   File "C:\Users\SofíaOrtiz\AppData\Local\Programs\Python\Python313\Lib\zipfile\__init__.py", line 1383, in __init__
     self.fp = io.open(file, filemode)
               ~~~~~~~^^^^^^^^^^^^^^^^
-PermissionError: [Errno 13] Permission denied: 'C:\\Users\\SofíaOrtiz\\Downloads\\automatizador_cierre_ot\\output\\_temp\\etapa_2_actualizacion_mensual\\programa_mensual_actualizado.xlsx'
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "C:\Users\SofíaOrtiz\Downloads\automatizador_cierre_ot\gui.py", line 778, in _process
-    result = ejecutar_etapa_2_actualizar_mensual(
-        ruta_programa_turno=self.vars["turno"].get(),
-    ...<4 lines>...
-        fecha_hasta=self.vars["fecha_hasta"].get(),
-    )
-  File "C:\Users\SofíaOrtiz\Downloads\automatizador_cierre_ot\main.py", line 123, in ejecutar_etapa_2_actualizar_mensual
-    df_turno_aplicado = actualizar_programa_mensual(
-        ruta_programa_turno,
-    ...<4 lines>...
-        fecha_hasta=fecha_hasta_parsed,
-    )
-  File "C:\Users\SofíaOrtiz\Downloads\automatizador_cierre_ot\procesos\actualizar_programa_mensual.py", line 830, in actualizar_programa_mensual
-    raise PermissionError(
-    ...<2 lines>...
-    ) from exc
-PermissionError: No se pudo guardar el archivo de salida porque esta en uso: C:\Users\SofíaOrtiz\Downloads\automatizador_cierre_ot\output\_temp\etapa_2_actualizacion_mensual\programa_mensual_actualizado.xlsx. Cierra el Excel abierto (y su vista previa) y vuelve a intentar.
+PermissionError: [Errno 13] Permission denied: 'C:\\Users\\SofíaOrtiz\\Downloads\\automatizador_cierre_ot\\output\\_temp\\etapa_3_clasificacion\\Cierre de OT Turno 16.04 al 22.04.xlsx'

@@ -15,14 +15,12 @@ from main import (
     ejecutar_etapa_1_limpieza_base,
     ejecutar_etapa_2_actualizar_mensual,
     ejecutar_etapa_3_clasificacion,
-    ejecutar_flujo,
 )
 
 ETAPAS = {
     "Etapa 1 - Cierre OT base (desde MSEWJO)": "etapa_1",
     "Etapa 2 - Actualizar mensual": "etapa_2",
     "Etapa 3 - Clasificacion final": "etapa_3",
-    "Flujo completo (1+2+3)": "completo",
 }
 
 PALETA = {
@@ -41,6 +39,9 @@ CAMPO_META = {
     "mensual": {"label": "Programa Mensual", "selector": "file"},
     "fecha_desde": {"label": "Fecha desde", "selector": "date"},
     "fecha_hasta": {"label": "Fecha hasta", "selector": "date"},
+    "mensual_2": {"label": "Programa Mensual (+)", "selector": "file"},
+    "fecha2_desde": {"label": "Fecha desde (+)", "selector": "date"},
+    "fecha2_hasta": {"label": "Fecha hasta (+)", "selector": "date"},
     "output": {"label": "Carpeta Salida", "selector": "dir"},
 }
 
@@ -243,6 +244,9 @@ class AutomatizadorGUI(tk.Tk):
             "mensual": tk.StringVar(),
             "fecha_desde": tk.StringVar(),
             "fecha_hasta": tk.StringVar(),
+            "mensual_2": tk.StringVar(),
+            "fecha2_desde": tk.StringVar(),
+            "fecha2_hasta": tk.StringVar(),
             "matriz": tk.StringVar(value=diccionario_guardado),
             "output": tk.StringVar(value=str(Path("output").resolve())),
         }
@@ -255,6 +259,8 @@ class AutomatizadorGUI(tk.Tk):
         )
         self.field_rows: dict[str, tk.Frame] = {}
         self.date_buttons: dict[str, tk.Button] = {}
+        self.extra_mensual_enabled = False
+        self.toggle_mensual_btn: tk.Button | None = None
         self.process_btn: tk.Button
 
         self._build_ui()
@@ -398,20 +404,32 @@ class AutomatizadorGUI(tk.Tk):
         fields_container = tk.Frame(card, bg=PALETA["superficie"])
         fields_container.pack(fill="both", expand=True, padx=18, pady=(2, 8))
 
-        field_order = ["msewjo", "turno", "mensual", "fecha_desde", "fecha_hasta", "output"]
+        field_order = [
+            "msewjo",
+            "turno",
+            "mensual",
+            "mensual_2",
+            "fecha_desde",
+            "fecha_hasta",
+            "fecha2_desde",
+            "fecha2_hasta",
+            "output",
+        ]
         for idx, key in enumerate(field_order):
-            if key == "fecha_hasta":
+            if key in {"fecha_hasta", "fecha2_hasta"}:
                 continue
 
-            if key == "fecha_desde":
+            if key in {"fecha_desde", "fecha2_desde"}:
+                desde_key = key
+                hasta_key = "fecha_hasta" if key == "fecha_desde" else "fecha2_hasta"
                 row_frame = tk.Frame(fields_container, bg=PALETA["superficie"])
                 row_frame.grid(row=idx, column=0, sticky="we", pady=6)
-                self.field_rows["fecha_desde"] = row_frame
-                self.field_rows["fecha_hasta"] = row_frame
+                self.field_rows[desde_key] = row_frame
+                self.field_rows[hasta_key] = row_frame
 
                 tk.Label(
                     row_frame,
-                    text=CAMPO_META["fecha_desde"]["label"],
+                    text=CAMPO_META[desde_key]["label"],
                     width=18,
                     anchor="w",
                     bg=PALETA["superficie"],
@@ -421,9 +439,9 @@ class AutomatizadorGUI(tk.Tk):
 
                 btn_desde = tk.Button(
                     row_frame,
-                    text=self._calendar_button_text("fecha_desde"),
+                    text=self._calendar_button_text(desde_key),
                     width=12,
-                    command=lambda: self._open_calendar_for("fecha_desde"),
+                    command=lambda k=desde_key: self._open_calendar_for(k),
                     bg=PALETA["superficie"],
                     fg=PALETA["primario_oscuro"],
                     activebackground=PALETA["primario"],
@@ -434,11 +452,11 @@ class AutomatizadorGUI(tk.Tk):
                     cursor="hand2",
                 )
                 btn_desde.grid(row=0, column=1, padx=(8, 24), sticky="w")
-                self.date_buttons["fecha_desde"] = btn_desde
+                self.date_buttons[desde_key] = btn_desde
 
                 tk.Label(
                     row_frame,
-                    text=CAMPO_META["fecha_hasta"]["label"],
+                    text=CAMPO_META[hasta_key]["label"],
                     width=12,
                     anchor="w",
                     bg=PALETA["superficie"],
@@ -448,9 +466,9 @@ class AutomatizadorGUI(tk.Tk):
 
                 btn_hasta = tk.Button(
                     row_frame,
-                    text=self._calendar_button_text("fecha_hasta"),
+                    text=self._calendar_button_text(hasta_key),
                     width=12,
-                    command=lambda: self._open_calendar_for("fecha_hasta"),
+                    command=lambda k=hasta_key: self._open_calendar_for(k),
                     bg=PALETA["superficie"],
                     fg=PALETA["primario_oscuro"],
                     activebackground=PALETA["primario"],
@@ -461,7 +479,7 @@ class AutomatizadorGUI(tk.Tk):
                     cursor="hand2",
                 )
                 btn_hasta.grid(row=0, column=3, padx=(8, 0), sticky="w")
-                self.date_buttons["fecha_hasta"] = btn_hasta
+                self.date_buttons[hasta_key] = btn_hasta
                 continue
 
             meta = CAMPO_META[key]
@@ -513,6 +531,23 @@ class AutomatizadorGUI(tk.Tk):
                     font=("Segoe UI", 10),
                     cursor="hand2",
                 ).grid(row=0, column=2, padx=(2, 0))
+
+                if key == "mensual":
+                    self.toggle_mensual_btn = tk.Button(
+                        row_frame,
+                        text="+",
+                        width=3,
+                        command=self._toggle_extra_mensual,
+                        bg=PALETA["superficie"],
+                        fg=PALETA["primario_oscuro"],
+                        activebackground=PALETA["primario_claro"],
+                        activeforeground=PALETA["texto"],
+                        relief=tk.SOLID,
+                        bd=1,
+                        font=("Segoe UI", 10, "bold"),
+                        cursor="hand2",
+                    )
+                    self.toggle_mensual_btn.grid(row=0, column=3, padx=(8, 0))
             elif selector == "date":
                 button = tk.Button(
                     row_frame,
@@ -662,13 +697,26 @@ class AutomatizadorGUI(tk.Tk):
         if stage == "etapa_2":
             return ["turno", "mensual"]
         if stage == "etapa_3":
-            return []
+            return ["mensual"]
         return ["msewjo", "turno", "mensual"]
 
     def _optional_fields_for_stage(self, stage: str) -> list[str]:
-        if stage in {"etapa_2", "completo"}:
+        if stage == "etapa_2":
             return ["fecha_desde", "fecha_hasta"]
         return []
+
+    def _use_extra_mensual(self, stage: str | None = None) -> bool:
+        stage_val = stage or self._selected_stage()
+        return self.extra_mensual_enabled and stage_val == "etapa_3"
+
+    def _toggle_extra_mensual(self) -> None:
+        if self._selected_stage() != "etapa_3":
+            return
+        self.extra_mensual_enabled = not self.extra_mensual_enabled
+        if not self.extra_mensual_enabled:
+            for key in ["mensual_2"]:
+                self.vars[key].set("")
+        self._refresh_fields_visibility()
 
     def _on_stage_change(self, *args: object) -> None:
         self._refresh_fields_visibility()
@@ -678,6 +726,8 @@ class AutomatizadorGUI(tk.Tk):
         required_keys = set(self._required_files_for_stage(stage))
         optional_keys = set(self._optional_fields_for_stage(stage))
         visible_keys = required_keys | optional_keys | {"output"}
+        if self._use_extra_mensual(stage):
+            visible_keys |= {"mensual_2"}
 
         for key, row in self.field_rows.items():
             if key in visible_keys:
@@ -685,25 +735,35 @@ class AutomatizadorGUI(tk.Tk):
             else:
                 row.grid_remove()
 
-        if stage == "completo":
-            self.process_btn.config(text="PROCESAR FLUJO COMPLETO")
-        else:
-            self.process_btn.config(text="PROCESAR ETAPA")
+        if self.toggle_mensual_btn is not None:
+            if stage == "etapa_3":
+                self.toggle_mensual_btn.grid()
+                self.toggle_mensual_btn.config(text="-" if self.extra_mensual_enabled else "+")
+            else:
+                self.toggle_mensual_btn.grid_remove()
+
+        self.process_btn.config(text="PROCESAR ETAPA")
 
         required_labels = ", ".join(
             CAMPO_META[k]["label"] for k in self._required_files_for_stage(stage)
         )
-        if stage in {"etapa_1", "etapa_2", "etapa_3", "completo"}:
+        if stage in {"etapa_1", "etapa_2", "etapa_3"}:
             required_labels = (
                 f"{required_labels}, Diccionarios (boton superior)"
                 if required_labels
                 else "Diccionarios (boton superior)"
             )
-        if stage in {"etapa_2", "completo"}:
+        if stage == "etapa_2":
             required_labels = (
                 f"{required_labels}, Rango semanal opcional (dd/mm/aaaa)"
                 if required_labels
                 else "Rango semanal opcional (dd/mm/aaaa)"
+            )
+        if stage == "etapa_3":
+            required_labels = (
+                f"{required_labels}, + Segundo mensual opcional"
+                if required_labels
+                else "+ Segundo mensual opcional"
             )
         self.requirements_var.set(f"Requeridos para esta etapa: {required_labels}.")
         self._refresh_diccionario_badge()
@@ -721,6 +781,39 @@ class AutomatizadorGUI(tk.Tk):
                 f"Fecha invalida en '{field_label}': '{text}'. Usa formato dd/mm/aaaa."
             ) from exc
 
+    def _validate_date_range(
+        self,
+        key_desde: str,
+        key_hasta: str,
+        *,
+        required: bool = False,
+    ) -> tuple[dt.date | None, dt.date | None]:
+        fecha_desde = self._parse_date_optional(
+            self.vars[key_desde].get(), CAMPO_META[key_desde]["label"]
+        )
+        fecha_hasta = self._parse_date_optional(
+            self.vars[key_hasta].get(), CAMPO_META[key_hasta]["label"]
+        )
+        if required and fecha_desde is None and fecha_hasta is None:
+            raise ValueError(
+                f"Debes ingresar al menos una fecha en {CAMPO_META[key_desde]['label']} / "
+                f"{CAMPO_META[key_hasta]['label']}."
+            )
+        if fecha_desde is not None and fecha_hasta is None:
+            fecha_hasta = fecha_desde
+        if fecha_hasta is not None and fecha_desde is None:
+            fecha_desde = fecha_hasta
+        if (
+            fecha_desde is not None
+            and fecha_hasta is not None
+            and fecha_desde > fecha_hasta
+        ):
+            raise ValueError(
+                f"{CAMPO_META[key_desde]['label']} no puede ser mayor que "
+                f"{CAMPO_META[key_hasta]['label']}."
+            )
+        return fecha_desde, fecha_hasta
+
     def _validate_inputs(self, stage: str) -> None:
         for key in self._required_files_for_stage(stage):
             value = self.vars[key].get().strip()
@@ -735,7 +828,7 @@ class AutomatizadorGUI(tk.Tk):
         if not output:
             raise ValueError("Falta seleccionar carpeta de salida.")
 
-        if stage in {"etapa_1", "etapa_2", "etapa_3", "completo"}:
+        if stage in {"etapa_1", "etapa_2", "etapa_3"}:
             diccionario = self.vars["matriz"].get().strip()
             if not diccionario:
                 raise ValueError("Falta seleccionar Diccionarios (boton superior).")
@@ -745,30 +838,21 @@ class AutomatizadorGUI(tk.Tk):
 
         if stage == "etapa_3":
             base = Path(output) / TEMP_DIRNAME
-            cierre_base = base / ETAPA_1_DIRNAME / "cierre_ot_base_tecnico.xlsx"
-            turno_aplicado = base / ETAPA_2_DIRNAME / "registros_turno_aplicado.xlsx"
-            if not cierre_base.exists():
-                raise FileNotFoundError(f"No existe archivo previo: {cierre_base}")
-            if not turno_aplicado.exists():
-                raise FileNotFoundError(f"No existe archivo previo: {turno_aplicado}")
+            cierres_turno = list((base / ETAPA_1_DIRNAME).glob("Cierre de OT Turno *.xlsx"))
+            if not cierres_turno:
+                raise FileNotFoundError(
+                    "No existe 'Cierre de OT Turno *.xlsx' para etapa 3. "
+                    "Ejecuta etapa 1 primero."
+                )
+            if self._use_extra_mensual(stage):
+                mensual_2 = self.vars["mensual_2"].get().strip()
+                if not mensual_2:
+                    raise ValueError("Falta seleccionar: Programa Mensual (+)")
+                if not Path(mensual_2).exists():
+                    raise FileNotFoundError(f"No existe el archivo: {mensual_2}")
 
-        if stage in {"etapa_2", "completo"}:
-            fecha_desde = self._parse_date_optional(
-                self.vars["fecha_desde"].get(), CAMPO_META["fecha_desde"]["label"]
-            )
-            fecha_hasta = self._parse_date_optional(
-                self.vars["fecha_hasta"].get(), CAMPO_META["fecha_hasta"]["label"]
-            )
-            if fecha_desde is not None and fecha_hasta is None:
-                fecha_hasta = fecha_desde
-            if fecha_hasta is not None and fecha_desde is None:
-                fecha_desde = fecha_hasta
-            if (
-                fecha_desde is not None
-                and fecha_hasta is not None
-                and fecha_desde > fecha_hasta
-            ):
-                raise ValueError("Fecha desde no puede ser mayor que fecha hasta.")
+        if stage == "etapa_2":
+            self._validate_date_range("fecha_desde", "fecha_hasta", required=False)
 
     def _format_result_lines(self, result: dict) -> str:
         lines = []
@@ -777,14 +861,34 @@ class AutomatizadorGUI(tk.Tk):
         return "\n".join(lines)
 
     def _reset_inputs(self) -> None:
-        for key in ["msewjo", "turno", "mensual", "fecha_desde", "fecha_hasta"]:
+        for key in [
+            "msewjo",
+            "turno",
+            "mensual",
+            "mensual_2",
+            "fecha_desde",
+            "fecha_hasta",
+            "fecha2_desde",
+            "fecha2_hasta",
+        ]:
             self.vars[key].set("")
+        self.extra_mensual_enabled = False
         self._refresh_fields_visibility()
         self.status_var.set("Formulario recargado. Selecciona nuevos archivos para procesar.")
 
     def _reset_after_success(self) -> None:
-        for key in ["msewjo", "turno", "mensual", "fecha_desde", "fecha_hasta"]:
+        for key in [
+            "msewjo",
+            "turno",
+            "mensual",
+            "mensual_2",
+            "fecha_desde",
+            "fecha_hasta",
+            "fecha2_desde",
+            "fecha2_hasta",
+        ]:
             self.vars[key].set("")
+        self.extra_mensual_enabled = False
         self._refresh_fields_visibility()
         self.status_var.set("Listo para un nuevo procesamiento.")
 
@@ -816,17 +920,15 @@ class AutomatizadorGUI(tk.Tk):
                 result = ejecutar_etapa_3_clasificacion(
                     ruta_matriz_clasificacion=self.vars["matriz"].get(),
                     carpeta_salida=self.vars["output"].get(),
+                    ruta_programa_mensual=self.vars["mensual"].get(),
+                    ruta_programa_mensual_2=(
+                        self.vars["mensual_2"].get().strip()
+                        if self._use_extra_mensual(stage)
+                        else None
+                    ),
                 )
             else:
-                result = ejecutar_flujo(
-                    ruta_msewjo=self.vars["msewjo"].get(),
-                    ruta_programa_turno=self.vars["turno"].get(),
-                    ruta_programa_mensual=self.vars["mensual"].get(),
-                    ruta_matriz_clasificacion=self.vars["matriz"].get(),
-                    carpeta_salida=self.vars["output"].get(),
-                    fecha_desde=self.vars["fecha_desde"].get(),
-                    fecha_hasta=self.vars["fecha_hasta"].get(),
-                )
+                raise ValueError(f"Etapa desconocida: {stage}")
 
             self.status_var.set(f"{self.stage_label_var.get()} completada.")
             messagebox.showinfo(
