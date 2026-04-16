@@ -868,6 +868,17 @@ def _tokenizar_estado(value: object) -> set[str]:
     return {token for token in re.split(r"[^A-Z0-9]+", normalized) if token}
 
 
+def _es_estado_programado(valor_norm: str, tokens: set[str]) -> bool:
+    """Detecta un estado de programado numérico como '1' o '2'."""
+    if not valor_norm:
+        return False
+    if valor_norm.isdigit():
+        return True
+    if tokens and all(token.isdigit() for token in tokens):
+        return True
+    return False
+
+
 def _is_sig_rpmo_sheet(title: object) -> bool:
     return normalize_text(title) == "SIGRPMO"
 
@@ -948,7 +959,7 @@ def obtener_estado_y_comentario(
     """
     Evalua estado en rango dinamico (incluyente):
     for dia in range(dia_inicio, dia_fin + 1)
-    Prioridad: S > NR > RR > R.
+    El ultimo ingreso valido dentro del rango define el resultado.
     """
     comentario_base = (
         safe_str(ws.cell(row=row, column=comentario_col).value)
@@ -973,22 +984,32 @@ def obtener_estado_y_comentario(
         es_nr = "NR" in tokens or valor_norm in {"NO REALIZADO", "NOREALIZADO"}
         es_rr = "RR" in tokens
         es_r = ("R" in tokens or valor_norm == "R") and not es_nr and not es_rr
+        es_programado = _es_estado_programado(valor_norm, tokens)
 
-        # Regla solicitada: si mensual marca R, clasificar como R/TT
-        # aunque exista comentario en celda.
         if es_r:
-            candidato = ("R", comentario_celda or comentario_base)
-        elif comentario_celda:
-            candidato = ("S", comentario_celda)
-        elif es_nr:
-            candidato = ("NR", comentario_base)
-        elif es_rr:
-            candidato = ("RR", comentario_base)
-        else:
+            mejor_estado = "R"
+            mejor_comentario = comentario_celda or comentario_base
             continue
 
-        if _es_mejor_estado((mejor_estado, mejor_comentario), candidato):
-            mejor_estado, mejor_comentario = candidato
+        if comentario_celda:
+            mejor_estado = "S"
+            mejor_comentario = comentario_celda
+            continue
+
+        if es_nr:
+            mejor_estado = "NR"
+            mejor_comentario = comentario_base
+            continue
+
+        if es_rr:
+            mejor_estado = "RR"
+            mejor_comentario = comentario_base
+            continue
+
+        if es_programado:
+            mejor_estado = ""
+            mejor_comentario = ""
+            continue
 
     return mejor_estado, mejor_comentario
 
