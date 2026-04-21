@@ -88,6 +88,18 @@
       {
         "keyword": "FUERA DE SERVICIO",
         "codigo": "MI"
+      },
+      {
+        "keyword": "TIEMPO LIMITE",
+        "codigo": "MI"
+      },
+      {
+        "keyword": "OBSTRUIDO",
+        "codigo": "MI"
+      },
+      {
+        "keyword": "PRESENCIA RODADOS",
+        "codigo": "MI"
       }
     ]
   }

@@ -52,6 +52,20 @@ def _stage_dir(carpeta_salida: str | Path, stage_dirname: str) -> Path:
     return stage_dir
 
 
+def _eliminar_archivos_etapa_3_no_deseados(stage_dir: Path) -> None:
+    for nombre in [
+        "cierre_ot_final.xlsx",
+        "registros_clasificados.xlsx",
+        "registros_turno_aplicado_etapa_3.xlsx",
+    ]:
+        ruta = stage_dir / nombre
+        if ruta.exists():
+            try:
+                ruta.unlink()
+            except Exception:
+                pass
+
+
 def _parse_fecha_usuario(value: str | dt.date | None, campo: str) -> dt.date | None:
     if value is None or value == "":
         return None
@@ -758,7 +772,13 @@ def ejecutar_etapa_3_clasificacion(
             fecha_hasta=fecha_hasta_parsed,
         )
 
-    cierre_actualizado_path = stage_dir / cierre_base_input.name
+    _eliminar_archivos_etapa_3_no_deseados(stage_dir)
+
+    if not cierre_base_input.name.startswith("Cierre de OT Turno "):
+        cierre_actualizado_path = stage_dir / "cierre_ot_turno_actualizado.xlsx"
+    else:
+        cierre_actualizado_path = stage_dir / cierre_base_input.name
+
     resumen_1 = etapa3_clasificacion(
         path_cierre_ot_base=cierre_base_input,
         path_programa_mensual=Path(ruta_programa_mensual),
@@ -807,6 +827,8 @@ def ejecutar_etapa_3_clasificacion(
     }
     if mensual_usado_2_path is not None:
         result["mensual_usado_2"] = mensual_usado_2_path
+
+    _eliminar_archivos_etapa_3_no_deseados(stage_dir)
     return result
 
 
